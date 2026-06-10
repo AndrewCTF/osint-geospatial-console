@@ -24,6 +24,40 @@ import { apiFetch } from '../../transport/http.js';
 const ROT_EPSILON = 0.01; // ~0.57°
 const SCALE_EPSILON = 0.02;
 
+// Aircraft dead-reckoning horizon. When a fix arrives we also add a
+// predicted sample this many seconds ahead along velocity/track, so the
+// interpolator always has a forward segment to fly between (possibly
+// bursty) fixes instead of freezing at the last sample and then rushing.
+const DR_HORIZON_S = 90;
+const FAR_FUTURE = Cesium.JulianDate.fromIso8601('2200-01-01T00:00:00Z');
+const EPOCH_START = Cesium.JulianDate.fromIso8601('1970-01-01T00:00:00Z');
+
+// Great-circle projection of (lon, lat) `dtSec` seconds ahead at
+// `velocityMs` along bearing `trackDeg`.
+function deadReckon(
+  lon: number,
+  lat: number,
+  velocityMs: number,
+  trackDeg: number,
+  dtSec: number,
+): [number, number] {
+  const R = 6_371_000;
+  const d = (velocityMs * dtSec) / R;
+  const brg = Cesium.Math.toRadians(trackDeg);
+  const lat1 = Cesium.Math.toRadians(lat);
+  const lon1 = Cesium.Math.toRadians(lon);
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brg),
+  );
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(brg) * Math.sin(d) * Math.cos(lat1),
+      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
+    );
+  return [Cesium.Math.toDegrees(lon2), Cesium.Math.toDegrees(lat2)];
+}
+
 // Read a Cesium property's *current* value. Works for ConstantProperty,
 // CallbackProperty, etc. Returns undefined if the property is unset.
 function currentValue<T>(prop: Cesium.Property | undefined): T | undefined {
@@ -135,6 +169,12 @@ export class PollGeoJsonAdapter implements LayerAdapter {
   // disappears from the upstream feed (so a lower-priority layer can take
   // over rendering it).
   private ownedIcao = new Map<string, string>();
+  // entityId → epoch seconds of the newest position fix we've sampled.
+  // Lets the aircraft motion model skip polls that carry no NEW fix (the
+  // backend snapshot refreshes faster than most aircraft fixes update), so
+  // the tweener keeps flying the dead-reckoned segment instead of getting
+  // a duplicate sample stamped at receipt time.
+  private lastFixEpoch = new Map<string, number>();
 
   constructor(private readonly props: Props) {
     this.ds = new Cesium.CustomDataSource(props.ctx.descriptor.id);
@@ -169,6 +209,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       aircraftDedup.release(icao, layerId);
     }
     this.ownedIcao.clear();
+    this.lastFixEpoch.clear();
     try {
       this.props.ctx.viewer.dataSources.remove(this.ds, true);
     } catch {
@@ -314,8 +355,13 @@ export class PollGeoJsonAdapter implements LayerAdapter {
 
       // Feed track ring for the entity-panel sparkline
       if (this.props.styleKind === 'aircraft' || this.props.styleKind === 'vessel') {
+        // Track points are stamped with the fix's OBSERVATION time when the
+        // backend provides it (seen_at), not receipt time — under bursty
+        // refresh, receipt-time stamps bunched fixes together and the trail
+        // polyline drew stair-steps.
+        const seenAtProp = props['seen_at'];
         const tp: { t: number; lon: number; lat: number; alt: number; sog?: number; track?: number } = {
-          t: Date.now(),
+          t: typeof seenAtProp === 'number' ? seenAtProp * 1000 : Date.now(),
           lon,
           lat,
           alt: alt ?? 0,
@@ -343,7 +389,10 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       const newPos = Cesium.Cartesian3.fromDegrees(lon, lat, alt ?? 0);
       const isTrackable = this.props.styleKind === 'aircraft' || this.props.styleKind === 'vessel';
       if (existing) {
-        if (isTrackable) {
+        if (this.props.styleKind === 'aircraft') {
+          // Aircraft motion model — time-anchored samples + dead reckoning.
+          this.upsertAircraftSamples(existing, id, props, newPos, lon, lat, alt ?? 0);
+        } else if (isTrackable) {
           // Stationary-entity bypass: if the new position is within 100m of
           // the previous one (parked aircraft, anchored vessel), don't churn
           // a SampledPositionProperty for it — keep a ConstantPositionProperty
@@ -369,17 +418,13 @@ export class PollGeoJsonAdapter implements LayerAdapter {
             let sampled = existing.position as Cesium.SampledPositionProperty | undefined;
             if (!(sampled instanceof Cesium.SampledPositionProperty)) {
               sampled = new Cesium.SampledPositionProperty();
-              if (this.props.styleKind === 'aircraft') {
-                sampled.setInterpolationOptions({
-                  interpolationAlgorithm: Cesium.LagrangePolynomialApproximation,
-                  interpolationDegree: 2,
-                });
-              } else {
-                sampled.setInterpolationOptions({
-                  interpolationAlgorithm: Cesium.LinearApproximation,
-                  interpolationDegree: 1,
-                });
-              }
+              // Vessels stay on Linear — slow movers; a higher-order interp
+              // would overshoot into bizarre wakes. (Aircraft are handled by
+              // upsertAircraftSamples above and never reach this branch.)
+              sampled.setInterpolationOptions({
+                interpolationAlgorithm: Cesium.LinearApproximation,
+                interpolationDegree: 1,
+              });
               sampled.forwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
               sampled.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
               // Seed with current Cesium clock time at the existing pos
@@ -435,7 +480,13 @@ export class PollGeoJsonAdapter implements LayerAdapter {
           properties: props,
         };
         this.applyStyle(opts, props);
-        entities.add(opts);
+        const added = entities.add(opts);
+        // Seed the motion model immediately so a brand-new aircraft starts
+        // flying its dead-reckoned segment instead of sitting frozen until
+        // its next fix arrives.
+        if (this.props.styleKind === 'aircraft') {
+          this.upsertAircraftSamples(added, id, props, newPos, lon, lat, alt ?? 0);
+        }
       }
     }
 
@@ -446,6 +497,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     for (const oldId of this.seenIds) {
       if (!nextIds.has(oldId)) {
         entities.removeById(oldId);
+        this.lastFixEpoch.delete(oldId);
         const icao = this.ownedIcao.get(oldId);
         if (icao) {
           aircraftDedup.release(icao, layerIdForPrune);
@@ -457,6 +509,99 @@ export class PollGeoJsonAdapter implements LayerAdapter {
 
     entities.resumeEvents();
     this.props.ctx.viewer.scene.requestRender();
+  }
+
+  // Aircraft motion model — time-anchored samples + short-horizon dead
+  // reckoning.
+  //
+  // Fixes arrive bursty: the backend snapshot refreshes every ~1 s in good
+  // weather but tens of seconds when upstreams throttle, and each
+  // aircraft's own fix carries `seen_pos_s` of lag on top. Stamping every
+  // sample with RECEIPT time made a 25 s-old fix land "now": the tweener
+  // rushed to it, froze (HOLD extrapolation), then rushed again — the
+  // operator sees zig-zag motion with sharp edges and stop-start aircraft.
+  //
+  // Model: anchor the real sample at its OBSERVATION time
+  // (seen_at − seen_pos), then add one predicted sample DR_HORIZON_S ahead
+  // along velocity/track so the interpolator always has a forward segment
+  // to fly. When the next real fix arrives, predictions after it are
+  // removed before anchoring, so the path bends to truth with at most a
+  // small correction instead of a freeze-then-jump.
+  private upsertAircraftSamples(
+    entity: Cesium.Entity,
+    id: string,
+    props: Record<string, unknown>,
+    newPos: Cesium.Cartesian3,
+    lon: number,
+    lat: number,
+    alt: number,
+  ): void {
+    const t0 = this.props.ctx.viewer.clock.currentTime;
+    const seenPos = typeof props['seen_pos_s'] === 'number' ? (props['seen_pos_s'] as number) : 0;
+    const seenAt = typeof props['seen_at'] === 'number' ? (props['seen_at'] as number) : null;
+    const fixEpoch = (seenAt ?? Date.now() / 1000) - seenPos;
+
+    let sampled = entity.position as Cesium.SampledPositionProperty | undefined;
+    const isSampled = sampled instanceof Cesium.SampledPositionProperty;
+    const last = this.lastFixEpoch.get(id);
+    if (isSampled && last != null && fixEpoch <= last) {
+      // No new fix this poll — keep flying the current prediction.
+      return;
+    }
+
+    if (!isSampled) {
+      sampled = new Cesium.SampledPositionProperty();
+      sampled.setInterpolationOptions({
+        interpolationAlgorithm: Cesium.LagrangePolynomialApproximation,
+        interpolationDegree: 2,
+      });
+      sampled.forwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+      sampled.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+      const old = entity.position?.getValue(t0) as Cesium.Cartesian3 | undefined;
+      if (old) sampled.addSample(t0, old);
+      entity.position = sampled;
+    }
+
+    // Anchor the real sample at observation time, clamped to "now" so a
+    // skewed upstream clock can't put samples in the future.
+    let fixJD = Cesium.JulianDate.fromDate(new Date(fixEpoch * 1000));
+    if (Cesium.JulianDate.greaterThan(fixJD, t0)) fixJD = t0.clone();
+    // Drop the stale prediction (and anything else) at/after this fix
+    // before re-anchoring, so the tweener bends to truth instead of
+    // detouring through the old dead-reckoned point.
+    sampled!.removeSamples(
+      new Cesium.TimeInterval({
+        start: fixJD,
+        stop: FAR_FUTURE,
+        isStartIncluded: true,
+        isStopIncluded: true,
+      }),
+    );
+    sampled!.addSample(fixJD, newPos);
+
+    // Forward prediction: only for airborne aircraft with a usable vector.
+    // Parked / vectorless contacts simply HOLD at the anchored fix.
+    const vel = props['velocity_ms'];
+    const trk = props['track_deg'];
+    const onGround = props['on_ground'] === true;
+    if (!onGround && typeof vel === 'number' && vel > 1 && typeof trk === 'number') {
+      const [plon, plat] = deadReckon(lon, lat, vel, trk, DR_HORIZON_S);
+      const predJD = Cesium.JulianDate.addSeconds(fixJD, DR_HORIZON_S, new Cesium.JulianDate());
+      sampled!.addSample(predJD, Cesium.Cartesian3.fromDegrees(plon, plat, alt));
+    }
+
+    // Bounded memory: prune samples older than 30 minutes.
+    const cutoff = Cesium.JulianDate.addSeconds(t0, -1800, new Cesium.JulianDate());
+    sampled!.removeSamples(
+      new Cesium.TimeInterval({
+        start: EPOCH_START,
+        stop: cutoff,
+        isStartIncluded: true,
+        isStopIncluded: false,
+      }),
+    );
+
+    this.lastFixEpoch.set(id, fixEpoch);
   }
 
   private applyStyle(

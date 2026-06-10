@@ -601,7 +601,7 @@ async def _do_global_fanout() -> dict[str, Any]:
 
 
 def _merge_with_previous(
-    new_fc: dict[str, Any], prev_fc: dict[str, Any], max_age_s: float = 30.0
+    new_fc: dict[str, Any], prev_fc: dict[str, Any], max_age_s: float = 75.0
 ) -> dict[str, Any]:
     """Union the fresh fan-out with recently-seen aircraft from the previous
     snapshot.
@@ -613,7 +613,8 @@ def _merge_with_previous(
     aircraft missing from the current fan-out is carried forward until its
     last fix is older than max_age_s; the frontend tints stale contacts via
     seen_pos/seen_at, so carried-forward aircraft degrade visibly instead
-    of vanishing."""
+    of vanishing. 75 s covers the worst observed throttled fan-out cycle
+    (~30 s) plus two missed cycles — below that, contacts flickered."""
     now = time.time()
     by_id: dict[Any, dict[str, Any]] = {}
     for f in new_fc.get("features") or []:
