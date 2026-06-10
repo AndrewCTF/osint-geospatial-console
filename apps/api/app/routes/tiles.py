@@ -1,20 +1,27 @@
-"""GET /tiles/basemap/{z}/{x}/{y}.png — basemap tile proxy.
+"""Tile proxies — basemap, satellite imagery, terrain.
 
-Default basemap is Carto's free Dark Matter (English labels, dark substrate,
-no API key for low-volume usage). The proxy:
-- Hides any provider from the browser's network panel.
-- Caches with a long TTL because basemap tiles are static.
-- Lets us switch providers in one place if Carto deprecates the path.
+All routes share one pattern: typed-int z/x/y (no path traversal), disk
+TileCache (fetch-once-per-TTL semantics, per-key coalescing), and
+stale-on-upstream-failure so a dead provider degrades to frozen tiles, not
+a blank globe. The browser only ever sees /tiles/* — providers are
+swappable here in one place.
 
-License: Carto Dark Matter is © OpenStreetMap contributors + © CARTO,
-free under their attribution terms (no key required for non-commercial /
-limited usage).
+Sources (all keyless):
+- basemap: Carto Dark Matter — (c) OpenStreetMap contributors, (c) CARTO.
+- sat z<=13: EOX Sentinel-2 cloudless (s2maps.eu) — CC BY-NC-SA 4.0,
+  attribution: "Sentinel-2 cloudless by EOX (Contains modified Copernicus
+  Sentinel data)". Rendered in the frontend attribution footer.
+- sat z>=14: Esri World Imagery legacy tile endpoint — attribution
+  "(c) Esri"; high-zoom complement to the 10 m Sentinel mosaic.
+- terrain: AWS Open Data Mapzen terrarium elevation tiles (z 0-15).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
+from app.config import Settings, get_settings
+from app.tilecache import TileCache
 from app.upstream import get_client
 
 router = APIRouter(tags=["tiles"])
@@ -27,22 +34,121 @@ CARTO_HOSTS = [
     "https://d.basemaps.cartocdn.com",
 ]
 
+_EOX_LAYER = "s2cloudless-2024_3857"
+# z <= split → EOX Sentinel-2 (10 m source res tops out ~z13);
+# z > split → Esri World Imagery (sub-meter in cities).
+_SAT_SPLIT_Z = 13
+
+_TTL_BASEMAP = 30 * 86400.0
+_TTL_SAT = 365 * 86400.0
+_TTL_TERRAIN = 10 * 365 * 86400.0  # elevation doesn't change
+
+# One TileCache per configured root. Keyed by root (not a singleton) so
+# tests overriding tile_cache_dir get their own isolated cache.
+_caches: dict[str, TileCache] = {}
+
+
+def _cache_for(root: str) -> TileCache:
+    tc = _caches.get(root)
+    if tc is None:
+        tc = TileCache(root)
+        _caches[root] = tc
+    return tc
+
+
+async def _fetch_bytes(url: str) -> bytes | None:
+    try:
+        r = await get_client().get(url)
+    except Exception:
+        return None
+    if r.status_code != 200:
+        return None
+    return r.content
+
 
 @router.get("/tiles/basemap/{z}/{x}/{y}.png")
-async def basemap_tile(z: int, x: int, y: int) -> Response:
+async def basemap_tile(
+    z: int, x: int, y: int, settings: Settings = Depends(get_settings)
+) -> Response:
     if not (0 <= z <= 22):
         raise HTTPException(400, "z out of range")
     # round-robin shard for parallelism
     host = CARTO_HOSTS[(x + y) % len(CARTO_HOSTS)]
-    url = f"{host}/dark_all/{z}/{x}/{y}@2x.png"
-    r = await get_client().get(url)
-    if r.status_code != 200:
-        raise HTTPException(502, f"basemap upstream {r.status_code}")
+
+    async def load() -> bytes | None:
+        return await _fetch_bytes(f"{host}/dark_all/{z}/{x}/{y}@2x.png")
+
+    data = await _cache_for(settings.tile_cache_dir).get(
+        "carto", z, x, y, "png", _TTL_BASEMAP, load
+    )
+    if data is None:
+        raise HTTPException(502, "basemap upstream failed")
     return Response(
-        content=r.content,
+        content=data,
         media_type="image/png",
         headers={
             "Cache-Control": "public, max-age=86400",
             "X-Basemap": "carto-dark-matter",
         },
+    )
+
+
+@router.get("/tiles/sat/{z}/{x}/{y}.jpg")
+async def sat_tile(
+    z: int, x: int, y: int, settings: Settings = Depends(get_settings)
+) -> Response:
+    if not (0 <= z <= 19):
+        raise HTTPException(400, "z out of range")
+    if z <= _SAT_SPLIT_Z:
+        source = "eox"
+        url = (
+            f"https://tiles.maps.eox.at/wmts/1.0.0/{_EOX_LAYER}/default"
+            f"/GoogleMapsCompatible/{z}/{y}/{x}.jpg"
+        )
+    else:
+        source = "esri"
+        url = (
+            "https://services.arcgisonline.com/arcgis/rest/services"
+            f"/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        )
+
+    async def load() -> bytes | None:
+        return await _fetch_bytes(url)
+
+    data = await _cache_for(settings.tile_cache_dir).get(
+        source, z, x, y, "jpg", _TTL_SAT, load
+    )
+    if data is None:
+        raise HTTPException(502, "sat upstream failed")
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "public, max-age=604800",
+            "X-Sat-Source": source,
+        },
+    )
+
+
+@router.get("/tiles/terrain/{z}/{x}/{y}.png")
+async def terrain_tile(
+    z: int, x: int, y: int, settings: Settings = Depends(get_settings)
+) -> Response:
+    if not (0 <= z <= 15):
+        raise HTTPException(400, "z out of range (terrarium max 15)")
+
+    async def load() -> bytes | None:
+        return await _fetch_bytes(
+            f"https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+        )
+
+    data = await _cache_for(settings.tile_cache_dir).get(
+        "terrarium", z, x, y, "png", _TTL_TERRAIN, load
+    )
+    if data is None:
+        raise HTTPException(502, "terrain upstream failed")
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=2592000"},
     )
