@@ -24,6 +24,31 @@ interface Props {
   enableGoogle3D?: boolean;
 }
 
+// Above this camera altitude the Google photogrammetry is sub-pixel — hide
+// it and show the (free) sat globe instead so orbit panning burns zero
+// Google quota.
+const GOOGLE_3D_MAX_CAMERA_HEIGHT_M = 30_000;
+
+// Flip the Google tileset/globe/credit trio in one place. No-ops when the
+// state didn't change, so calling it from camera.changed stays cheap and
+// requestRenderMode-friendly (render only requested on actual flips).
+function applyGoogleGate(
+  viewer: Cesium.Viewer,
+  tileset: Cesium.Cesium3DTileset,
+  wanted: boolean,
+): void {
+  const h = viewer.camera.positionCartographic.height;
+  const visible = wanted && h < GOOGLE_3D_MAX_CAMERA_HEIGHT_M;
+  if (tileset.show !== visible) {
+    tileset.show = visible;
+    viewer.scene.globe.show = !visible;
+    // Google ToS requires visible attribution while their tiles render.
+    const credit = viewer.cesiumWidget.creditContainer as HTMLElement;
+    credit.style.display = visible ? '' : 'none';
+    viewer.scene.requestRender();
+  }
+}
+
 // Dark, English-everywhere basemap (Carto Dark Matter, proxied through our
 // backend so no third-party host appears in the browser network panel and
 // the provider is swappable in one place). Works without any Cesium ion
@@ -74,6 +99,10 @@ export function GlobeCanvas({
   // without disturbing other primitives in the scene.
   const osmBuildingsRef = useRef<Cesium.Cesium3DTileset | null>(null);
   const googleTilesetRef = useRef<Cesium.Cesium3DTileset | null>(null);
+  // Google tileset is created at most once per session and toggled via
+  // .show — re-enabling must never re-fetch the root tileset (quota diet).
+  const googleCreatingRef = useRef(false);
+  const googleWantedRef = useRef(false);
   // Generation counter so out-of-order async tile loads (user spamming the
   // toggle) cannot install a stale tileset into the current scene.
   const stackGenRef = useRef(0);
@@ -168,6 +197,14 @@ export function GlobeCanvas({
     // Magenta polyline through the selected entity's last ~60 positions.
     const detachTrack = installSelectionTrack(viewer);
 
+    // Height gate for Google photogrammetry — applyGoogleGate no-ops when
+    // nothing changed, so this listener stays requestRenderMode-friendly.
+    const onCameraChanged = (): void => {
+      const ts = googleTilesetRef.current;
+      if (ts) applyGoogleGate(viewer, ts, googleWantedRef.current);
+    };
+    viewer.camera.changed.addEventListener(onCameraChanged);
+
     viewerRef.current = viewer;
     const compositor = new LayerCompositor(registry, viewer);
     compositor.start();
@@ -176,6 +213,7 @@ export function GlobeCanvas({
 
     return () => {
       handler.destroy();
+      viewer.camera.changed.removeEventListener(onCameraChanged);
       detachReticle();
       detachTrack();
       compositorRef.current?.stop();
@@ -215,9 +253,12 @@ export function GlobeCanvas({
         scene.primitives.remove(osmBuildingsRef.current); // also destroys
         osmBuildingsRef.current = null;
       }
+      // Hide — never destroy — the Google tileset: re-enabling later must
+      // not re-fetch the root tileset (quota). Viewer.destroy() reaps it
+      // at unmount via scene.primitives.
+      googleWantedRef.current = false;
       if (googleTilesetRef.current) {
-        scene.primitives.remove(googleTilesetRef.current);
-        googleTilesetRef.current = null;
+        applyGoogleGate(viewer, googleTilesetRef.current, false);
       }
       // Reset terrain to the cheap ellipsoid. Setting viewer.terrainProvider
       // here also resets viewer.scene.terrainProvider.
@@ -242,14 +283,11 @@ export function GlobeCanvas({
       }
       scene.requestRender();
 
-      // Drop any prior ion-stack tilesets before adding fresh ones.
+      // Drop any prior OSM buildings before adding fresh ones. The Google
+      // tileset is deliberately NOT dropped — it's session-cached.
       if (osmBuildingsRef.current) {
         scene.primitives.remove(osmBuildingsRef.current);
         osmBuildingsRef.current = null;
-      }
-      if (googleTilesetRef.current) {
-        scene.primitives.remove(googleTilesetRef.current);
-        googleTilesetRef.current = null;
       }
 
       // OSM 3D buildings — the only remaining ion consumer, so it's gated
@@ -269,21 +307,39 @@ export function GlobeCanvas({
           .catch((e: unknown) => console.warn('OSM buildings failed:', e));
       }
 
-      // Optional: Google Photorealistic 3D Tiles. When enabled, hide the
-      // ellipsoid globe so the photogrammetry is the surface.
+      // Optional: Google Photorealistic 3D Tiles. Created once per session
+      // (lazy), then toggled via .show + the camera-height gate so orbit
+      // views and re-toggles burn no quota.
+      googleWantedRef.current = enableGoogle3D;
       if (enableGoogle3D) {
-        Cesium.createGooglePhotorealistic3DTileset()
-          .then((tileset) => {
-            if (stale()) {
-              tileset.destroy();
-              return;
-            }
-            scene.primitives.add(tileset);
-            googleTilesetRef.current = tileset;
-            scene.globe.show = false;
-            scene.requestRender();
+        if (googleTilesetRef.current) {
+          applyGoogleGate(viewer, googleTilesetRef.current, true);
+        } else if (!googleCreatingRef.current) {
+          googleCreatingRef.current = true;
+          Cesium.createGooglePhotorealistic3DTileset(undefined, {
+            // 24 (vs default 16) ≈ half the tile fetches for slightly softer
+            // detail; big cache so revisiting a city reuses tiles.
+            maximumScreenSpaceError: 24,
+            cacheBytes: 512 * 1024 * 1024,
+            maximumCacheOverflowBytes: 1024 * 1024 * 1024,
           })
-          .catch((e: unknown) => console.warn('Google Photorealistic 3D failed:', e));
+            .then((tileset) => {
+              googleCreatingRef.current = false;
+              if (!viewerRef.current) {
+                tileset.destroy();
+                return;
+              }
+              scene.primitives.add(tileset);
+              googleTilesetRef.current = tileset;
+              applyGoogleGate(viewer, tileset, googleWantedRef.current);
+            })
+            .catch((e: unknown) => {
+              googleCreatingRef.current = false;
+              console.warn('Google Photorealistic 3D failed:', e);
+            });
+        }
+      } else if (googleTilesetRef.current) {
+        applyGoogleGate(viewer, googleTilesetRef.current, false);
       } else {
         scene.globe.show = true;
       }
