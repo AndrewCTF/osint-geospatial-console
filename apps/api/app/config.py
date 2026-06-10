@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # ── infra ──
     database_url: str = "postgresql+asyncpg://osint:osint@localhost:5432/osint"
     redis_url: str = "redis://localhost:6379/0"
+    # Disk tile cache root (basemap / sat / terrain proxies). Grows with use;
+    # safe to delete at any time — it refills on demand.
+    tile_cache_dir: str = "./data/tilecache"
 
     # ── server ──
     api_host: str = "0.0.0.0"

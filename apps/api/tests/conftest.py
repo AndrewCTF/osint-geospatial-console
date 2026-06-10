@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Iterator
 
 import pytest
@@ -9,6 +10,11 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings, get_settings
 from app.main import create_app
+
+# One tile-cache dir per test session — _test_settings() is called per
+# request via dependency_overrides, and a fresh mkdtemp per call would
+# defeat the disk cache the tile tests assert on.
+_TEST_TILE_DIR = tempfile.mkdtemp(prefix="osint-test-tiles-")
 
 
 def _test_settings() -> Settings:
@@ -28,6 +34,7 @@ def _test_settings() -> Settings:
         database_url="postgresql+asyncpg://test:test@localhost:5432/test",
         redis_url="redis://localhost:6379/0",
         cors_origins="http://localhost:8080",
+        tile_cache_dir=_TEST_TILE_DIR,
     )
 
 
