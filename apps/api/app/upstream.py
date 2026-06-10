@@ -24,6 +24,13 @@ def get_client() -> httpx.AsyncClient:
         _CLIENT = httpx.AsyncClient(
             timeout=httpx.Timeout(15.0, connect=5.0),
             headers={"User-Agent": "osint-console/0.1"},
+            # local_address pins outbound sockets to IPv4. Several upstreams
+            # (CloudFront-backed weathercam.digitraffic.fi, cwwp2.dot.ca.gov)
+            # publish AAAA records; on hosts with broken IPv6 egress httpx
+            # exhausts the v6 attempts and reports "All connection attempts
+            # failed" while curl quietly falls back. One retry absorbs
+            # transient resets on long-lived pooled connections.
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0", retries=1),
         )
     return _CLIENT
 
