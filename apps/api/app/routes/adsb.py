@@ -477,40 +477,36 @@ async def _fetch_cell(primary_idx: int, lat: float, lon: float, cell_timeout: ht
 
 
 async def _try_firehose() -> list[dict[str, Any]] | None:
-    """Try ALL firehose endpoints in parallel, merge successful results.
-    Dedup by ICAO hex (freshest wins). Returns merged aircraft list or None
-    if all hosts fail. Multi-source merge boosts coverage significantly."""
+    """Try each firehose endpoint in order. Returns the first non-empty
+    aircraft list, or None if every host failed (rate-limit, block, 5xx,
+    timeout). A successful firehose returns ~10-15k aircraft globally —
+    the per-cell grid is a fallback only."""
     client = get_client()
     timeout = httpx.Timeout(15.0, connect=5.0)
-    now = time.time()
-
-    async def fetch_one(url: str) -> list[dict[str, Any]]:
+    for url in _FIREHOSE_URLS:
         try:
             async with _UPSTREAM_SEMAPHORE:
                 r = await client.get(url, timeout=timeout)
-            if r.status_code != 200:
-                return []
+        except (httpx.TimeoutException, httpx.TransportError):
+            continue
+        # 429 (rate-limit), 403 (Cloudflare block), 451 (ODbL block on
+        # adsb.lol), any 5xx — walk to the next host. Same fall-through
+        # philosophy as the per-cell grid: no breaker, no long-term memory
+        # of failure, the host may recover by the next refresh tick.
+        if r.status_code != 200:
+            continue
+        try:
             j = r.json()
-            ac = j.get("ac") or j.get("aircraft") or []
-            return [dict(a, _seen_at=now, _host=url) for a in ac]
-        except Exception:
-            return []
-
-    # Fetch all in parallel and merge
-    results = await asyncio.gather(*[fetch_one(url) for url in _FIREHOSE_URLS])
-    by_hex: dict[str, dict[str, Any]] = {}
-    for batch in results:
-        for a in batch:
-            hexid = (a.get("hex") or "").lower()
-            if not hexid:
-                continue
-            cur = by_hex.get(hexid)
-            if cur is None:
-                by_hex[hexid] = a
-            elif (a.get("seen_pos") or 1e9) < (cur.get("seen_pos") or 1e9):
-                by_hex[hexid] = a
-
-    return list(by_hex.values()) if by_hex else None
+        except ValueError:
+            continue
+        # Aggregators differ: airplanes.live / adsb.lol use "ac",
+        # adsb.fi's /v2/snapshot uses "aircraft". Accept either.
+        ac = j.get("ac") or j.get("aircraft") or []
+        if not ac:
+            continue
+        now = time.time()
+        return [dict(a, _seen_at=now, _host=url) for a in ac]
+    return None
 
 
 async def _try_opensky_global() -> dict[str, Any] | None:
