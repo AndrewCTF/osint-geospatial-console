@@ -2,12 +2,15 @@
 
 A single-analyst, defence/offence-grade open-source intelligence platform: a 3D/4D Cesium globe over ~60 free/open data sources, with a server-side fusion engine that correlates feeds (AIS+SAR for dark vessels, ADS-B NACp clusters for GPS jamming, BGP/Cloudflare for outages, etc.).
 
-See [`frontend.md`](./frontend.md), [`research.md`](./research.md), and [`research_updated.md`](./research_updated.md) for the full specs.
+It is also a **Model Context Protocol** server: an AI agent can query the same live feeds (aircraft, vessels, GPS jamming, fused anomalies) as distilled JSON — see the [MCP section](#mcp-server--query-the-live-console-from-an-ai-agent) below.
+
+See [`frontend.md`](./frontend.md), [`research.md`](./research.md), and [`research_updated.md`](./research_updated.md) for the full specs, [`docs/adsb-aircraft-pipeline.md`](./docs/adsb-aircraft-pipeline.md) for how the ~13 k-aircraft global feed is sourced and merged, and [`docs/mcp-server.md`](./docs/mcp-server.md) for the agent-facing MCP + intel API.
 
 ## Stack
 
 - **Frontend**: Vite + React 18 + TypeScript + CesiumJS + MapLibre GL JS v5.24 + Tailwind + Zustand
 - **Backend**: FastAPI (Python 3.12) + SQLAlchemy 2 + asyncpg + APScheduler + websockets
+- **Agent access**: Model Context Protocol server (`app.mcp_server`, MCP SDK) + optional local Ollama analysis
 - **Data**: PostgreSQL 16 + PostGIS 3.4 + TimescaleDB 2.x + Redis 7
 - **Infra**: Docker Compose, nginx reverse proxy
 
@@ -15,10 +18,15 @@ See [`frontend.md`](./frontend.md), [`research.md`](./research.md), and [`resear
 
 ```
 osint/
-├── apps/web/         # React + Cesium console
-├── apps/api/         # FastAPI backend
-├── packages/shared/  # Shared TS types (LayerDescriptor, Observation)
-└── infra/            # Docker, nginx, db init
+├── apps/web/                 # React + Cesium console
+├── apps/api/                 # FastAPI backend
+│   └── app/
+│       ├── intel/            # agent-facing analytics (classification, AOI, density, jamming)
+│       ├── routes/intel.py   # /api/intel/* deep-query JSON API
+│       └── mcp_server.py     # Model Context Protocol server (11 tools)
+├── packages/shared/          # Shared TS types (LayerDescriptor, Observation)
+├── docs/                     # adsb-aircraft-pipeline.md, mcp-server.md
+└── infra/                    # Docker, nginx, db init
 ```
 
 ## Quick start
@@ -34,16 +42,21 @@ Open <http://localhost:8080>.
 ## Tests
 
 ```bash
-pnpm -r test               # vitest (web, shared)
-cd apps/api && pytest      # api
+pnpm -r test                          # vitest (web, shared)
+cd apps/api && .venv/bin/pytest -q     # api: unit + route + intel/MCP degradation tests
 pnpm -r typecheck
+# manual MCP integration drivers (need backend on :8000):
+#   apps/api/.venv/bin/python tests/mcp_client_check.py   # stdio handshake
+#   apps/api/.venv/bin/python tests/mcp_full_check.py     # all 11 tools end-to-end + Ollama
 ```
 
 ## MCP server — query the live console from an AI agent
 
 The backend doubles as a **Model Context Protocol** server so an AI agent can
 interrogate the same warm feeds the globe renders, without flooding its own
-context. It exposes 11 tools over `app.mcp_server`:
+context. Full architecture + `/api/intel/*` HTTP reference:
+[`docs/mcp-server.md`](./docs/mcp-server.md). It exposes 11 tools over
+`app.mcp_server`:
 
 | Tool | What it returns |
 | --- | --- |
@@ -91,10 +104,10 @@ Ollama down → analysis falls back to raw intel JSON.
 
 ## Phase status
 
-- [x] Phase 0 — Foundation (this commit)
-- [ ] Phase 1 — MVP (4 live layers)
+- [x] Phase 0 — Foundation
+- [x] Phase 1 — MVP (live ADS-B / AIS / quakes / jamming layers)
 - [ ] Phase 2 — Replay + drill-in
-- [ ] Phase 3 — Fusion engine + alerts + 2D mirror
-- [ ] Phase 4 — Advanced sensors + AI
+- [x] Phase 3 — Fusion engine + alerts (correlation rules) + 2D mirror
+- [~] Phase 4 — Advanced sensors + AI — **MCP server + intel API shipped** (agent access, local Ollama analysis)
 
 See [the plan](.) for detail.
