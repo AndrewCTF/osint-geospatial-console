@@ -449,11 +449,10 @@ export class PollGeoJsonAdapter implements LayerAdapter {
             }
             if (!skip) {
               sampled.addSample(tNow, newPos);
-              // Prune anything older than 60 minutes. Longer history gives
-              // better sparklines + track analysis without memory pressure on
-              // high-spec hardware (128GB+). Cesium's event suspension + batch
-              // render keeps the UI responsive regardless.
-              const cutoff = Cesium.JulianDate.addSeconds(tNow, -3600, new Cesium.JulianDate());
+              // Prune anything older than 5 minutes. Very aggressive memory
+              // management: keeps only recent history for sparklines while
+              // staying responsive at 10k+ entity scale.
+              const cutoff = Cesium.JulianDate.addSeconds(tNow, -300, new Cesium.JulianDate());
               sampled.removeSamples(
                 new Cesium.TimeInterval({
                   start: Cesium.JulianDate.fromIso8601('1970-01-01T00:00:00Z'),

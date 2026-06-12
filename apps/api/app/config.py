@@ -15,7 +15,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # ".env" resolves against the server's CWD (apps/api in local dev,
+        # /app in the container); the repo-root path covers running uvicorn
+        # from apps/api against the monorepo's single .env. Later entries
+        # win on conflicts, real env vars beat both.
+        env_file=(".env", "../../.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

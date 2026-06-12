@@ -10,7 +10,11 @@ import type { Chokepoint } from '../registry/chokepoints.js';
 interface Props {
   viewer: Cesium.Viewer | null;
   classification?: string;
-  /** Cesium ion token from runtime config — empty string disables the 3D-sat toggle. */
+  /**
+   * Cesium ion token from runtime config. No longer gates the 3D-sat
+   * toggle — the sat/terrain stack is keyless; the token only adds the
+   * optional OSM Buildings layer.
+   */
   ionToken?: string;
   onOpenAlerts?: () => void;
 }
@@ -25,7 +29,6 @@ const STATUS_DOT: Record<string, string> = {
 export function CommandBar({
   viewer,
   classification = 'UNCLAS',
-  ionToken = '',
   onOpenAlerts,
 }: Props): JSX.Element {
   const feeds = useFeeds((s) => s.feeds);
@@ -52,11 +55,11 @@ export function CommandBar({
       <SearchField viewer={viewer} />
       <AoiSelector onPick={onPickAoi} />
 
-      {/* 3D satellite imagery + buildings toggle. Off by default; ion token gated. */}
+      {/* 3D satellite imagery toggle. Keyless: sat tiles + terrain come from
+          our own cached proxies; an ion token only adds OSM Buildings. */}
       <ImageryToggle
         mode={imageryMode}
         onToggle={() => setImageryMode(imageryMode === '3d-sat' ? '2d-dark' : '3d-sat')}
-        disabled={!ionToken}
       />
 
       {/* alert ticker — top alert in newest-first buffer; click opens panel */}
@@ -109,28 +112,22 @@ const SEV_COLOR: Record<string, string> = {
 
 /**
  * Compact mono pill that flips Cesium between the dark 2D basemap and the
- * Cesium World Imagery + 3D buildings stack. Disabled (with a hint tooltip)
- * when no ion token is configured.
+ * keyless satellite + terrain stack (EOX/Esri imagery, AWS terrain via our
+ * cached proxies). Always enabled — an ion token only adds OSM Buildings.
  */
 function ImageryToggle({
   mode,
   onToggle,
-  disabled,
 }: {
   mode: '2d-dark' | '3d-sat';
   onToggle: () => void;
-  disabled: boolean;
 }): JSX.Element {
   const on = mode === '3d-sat';
-  const title = disabled
-    ? 'Set CESIUM_ION_TOKEN to enable'
-    : 'Enable Cesium World Imagery + 3D buildings (requires CESIUM_ION_TOKEN)';
   return (
     <button
       type="button"
       onClick={onToggle}
-      disabled={disabled}
-      title={title}
+      title="Toggle satellite imagery + 3D terrain (keyless; ion token adds OSM Buildings)"
       aria-pressed={on}
       aria-label="Toggle 3D satellite imagery and buildings"
       data-testid="imagery-toggle"
@@ -139,7 +136,6 @@ function ImageryToggle({
         on
           ? 'border-accent-line text-accent bg-accent-dim'
           : 'border-line text-txt-2 hover:border-accent-line hover:text-txt-1',
-        disabled ? 'opacity-40 cursor-not-allowed hover:border-line hover:text-txt-2' : '',
       ]
         .filter(Boolean)
         .join(' ')}
