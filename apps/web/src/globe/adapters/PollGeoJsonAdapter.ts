@@ -109,10 +109,9 @@ interface FeatureCollection {
   note?: string;
 }
 
-// Per-layer entity cap. No artificial limit for high-memory setups (128GB+).
-// Uses dedup to handle duplicate coverage across feeds. Rendering stays
-// smooth via event suspension + requestRenderMode batching.
-const MAX_PER_LAYER = 500_000;
+// Per-layer entity cap. 25k baseline — high enough for all real feeds,
+// low enough to stay responsive. Dedup handles duplicate coverage.
+const MAX_PER_LAYER = 25_000;
 
 // djb2 string hash → unsigned 32-bit, base36 for compact ids. Used only to
 // synthesise a stable id when the upstream feature carries no id but does
