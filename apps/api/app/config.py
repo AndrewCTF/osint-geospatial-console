@@ -69,6 +69,28 @@ class Settings(BaseSettings):
     ollama_model: str = ""  # OLLAMA_MODEL ("" → auto-detect smallest installed)
     api_base: str = "http://localhost:8000"  # API_BASE (MCP → backend)
 
+    # ── DeepSeek (OpenAI-compatible) — primary reasoning backend ──
+    # The analytical tools (deep_analyze, news debias/fact-check) prefer
+    # DeepSeek and fall back to Ollama. When unset, app.llm reads the key +
+    # base from the user's opencode config (~/.config/opencode/opencode.jsonc).
+    deepseek_api_key: str = ""  # DEEPSEEK_API_KEY
+    deepseek_base_url: str = ""  # DEEPSEEK_BASE_URL ("" → opencode/default)
+    deepseek_model_fast: str = "deepseek-chat"  # extraction / classification
+    deepseek_model_reason: str = "deepseek-reasoner"  # judgement / fact-check
+
+    # ── News debias / fact-check engine ──
+    # Keyless RSS world feeds; analysis runs through app.llm. All optional.
+    news_enabled: bool = True
+    news_refresh_sec: int = 600  # backend RSS poll cadence
+    news_max_items: int = 400  # cap retained headlines
+
+    # ── Historical playback ──
+    # Position history store for 3D replay/scrub. SQLite by default; safe to
+    # delete (refills as live data flows). Disable to run fully stateless.
+    history_enabled: bool = True
+    history_db_path: str = "./data/history.db"
+    history_retention_hours: int = 48
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

@@ -19,6 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app import llm
 from app.config import get_settings
 from app.intel import analytics, aoi
 from app.intel.geo import BBox, bbox_from_radius
@@ -195,4 +196,5 @@ async def intel_sources() -> dict[str, Any]:
             "gfw_dark_vessels": bool(s.gfw_token),
         },
         "ollama": {"host": s.ollama_host, "model": s.ollama_model or "(auto-detect)"},
+        "llm": llm.status(),
     }
