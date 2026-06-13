@@ -49,12 +49,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     if background:
         correlate_runner.start()
-        # Start the global AIS upstream at boot (not only when a browser opens
-        # /ws/ais) so the MCP/intel vessel tools have data without a frontend.
-        if settings.aisstream_key:
-            ais_routes._ensure_upstream(settings.aisstream_key)
-        # Keyless global AIS firehose (Kystverket NMEA) — no key required, so it
-        # runs unconditionally and feeds the same store + browser broadcast.
+        # AISStream (keyed) is engaged ON DEMAND — only when a browser opens
+        # /ws/ais — and dropped when the last viewer leaves, to conserve its
+        # API message cap. It is NOT started at boot. The keyless Kystverket
+        # firehose below runs unconditionally so the MCP/intel vessel tools and
+        # the always-on store still have vessels without a frontend.
         from app import ais_firehose  # noqa: PLC0415
 
         ais_firehose.start()

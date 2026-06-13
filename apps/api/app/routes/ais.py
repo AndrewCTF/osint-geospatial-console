@@ -234,3 +234,8 @@ async def ais_ws(ws: WebSocket, settings: Settings = Depends(get_settings)) -> N
         pass
     finally:
         _clients.discard(ws)
+        # On-demand AISStream: when the last viewer leaves, drop the keyed
+        # upstream to conserve its API cap. The keyless Kystverket firehose
+        # keeps feeding the store + any future clients regardless.
+        if not _clients:
+            await _stop_upstream()
