@@ -950,10 +950,60 @@ async def _refresh_snapshot_forever() -> None:
         await asyncio.sleep(max(0.0, _SNAPSHOT_TARGET_CYCLE_S - elapsed))
 
 
+def viewport_filter(
+    fc: dict[str, Any],
+    lamin: float | None,
+    lomin: float | None,
+    lamax: float | None,
+    lomax: float | None,
+    limit: int | None,
+) -> dict[str, Any]:
+    """Filter a Point FeatureCollection to a bbox + decimate to ``limit``.
+
+    Serves only the on-screen subset so the frontend never instantiates the
+    full ~12k/18k entity set (the per-poll upsert + re-cluster of that many
+    entities is the web UI's real bottleneck — render itself is cheap). When no
+    bbox/limit is given the input is returned unchanged. Tolerates the
+    antimeridian (lomin > lomax). Decimation is a uniform stride so the thinned
+    set stays spatially even rather than clipping a corner.
+    """
+    feats = fc.get("features") or []
+    if None not in (lamin, lomin, lamax, lomax):
+        wrap = lomin > lomax  # type: ignore[operator]
+        kept: list[dict[str, Any]] = []
+        for f in feats:
+            try:
+                coords = f["geometry"]["coordinates"]
+                lon, lat = float(coords[0]), float(coords[1])
+            except (KeyError, TypeError, ValueError, IndexError):
+                continue
+            if lat < lamin or lat > lamax:  # type: ignore[operator]
+                continue
+            in_lon = (lon >= lomin or lon <= lomax) if wrap else (lomin <= lon <= lomax)
+            if not in_lon:
+                continue
+            kept.append(f)
+        feats = kept
+    if limit and len(feats) > limit:
+        stride = len(feats) / limit
+        feats = [feats[int(i * stride)] for i in range(limit)]
+    return {"type": "FeatureCollection", "features": feats}
+
+
 @router.get("/api/adsb/global")
-async def adsb_global() -> dict[str, Any]:
-    """Return the latest complete aircraft snapshot. Near-instant — never
-    blocks on the fan-out, never returns a partial result.
+async def adsb_global(
+    lamin: float | None = Query(None, ge=-90, le=90),
+    lomin: float | None = Query(None, ge=-180, le=180),
+    lamax: float | None = Query(None, ge=-90, le=90),
+    lomax: float | None = Query(None, ge=-180, le=180),
+    limit: int | None = Query(None, ge=1, le=20000),
+) -> dict[str, Any]:
+    """Return the latest aircraft snapshot, optionally scoped to a viewport.
+
+    With ``lamin/lomin/lamax/lomax`` (+ optional ``limit``) the snapshot is
+    filtered to that bbox and decimated — the frontend sends its camera view so
+    only on-screen aircraft are instantiated. With no params the FULL snapshot
+    is returned (back-compat for the MCP/intel tools).
 
     First call kicks off the background refresher and does one synchronous
     bootstrap fetch so the response isn't empty. Subsequent calls return
@@ -977,10 +1027,11 @@ async def adsb_global() -> dict[str, Any]:
                 _SNAPSHOT_TASK = asyncio.create_task(_refresh_snapshot_forever())
                 _SNAPSHOT_STARTED = True
     async with _SNAPSHOT_LOCK:
+        snap = _LATEST_SNAPSHOT
+    if lamin is None and lomin is None and lamax is None and lomax is None and limit is None:
         # Shallow copy so the caller can't mutate the live snapshot dict.
-        # The features list itself is shared (immutable from the caller's
-        # POV — every refresh assigns a new FeatureCollection).
-        return dict(_LATEST_SNAPSHOT)
+        return dict(snap)
+    return viewport_filter(snap, lamin, lomin, lamax, lomax, limit)
 
 
 async def stop_snapshot() -> None:
