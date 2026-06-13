@@ -20,10 +20,10 @@ Design notes (post-breaker rewrite):
   airplanes.live's burst limit, which is often the ONLY reachable host. Empty
   cells keep a 5s TTL so a transiently-throttled cell refills fast. The
   sticky snapshot dict IS the merge cache — the hot route returns it in
-  microseconds. The background refresher loop targets a 1s cycle (sleep =
-  max(0, 1.0 - elapsed)) so a fast fan-out doesn't burn CPU and a slow
+  microseconds. The background refresher loop targets a 5s cycle (sleep =
+  max(0, 5.0 - elapsed)) so a fast fan-out doesn't burn CPU and a slow
   fan-out doesn't add extra idle latency.
-- Frontend polls every 1s + snapshot ≤1s old = end-to-end ≤2s.
+- Frontend polls every 5s + snapshot ≤5s old = end-to-end ≤10s.
 - ~120 hand-picked dense cells over land (was 250+). Smaller grid × tighter
   TTL beats larger grid × longer TTL when egress is throttled.
 - OpenSky (authed, env creds) sits between the anonymous firehoses and the
@@ -462,11 +462,11 @@ _SNAPSHOT_LOCK = asyncio.Lock()
 _SNAPSHOT_BOOTSTRAP_LOCK = asyncio.Lock()
 _SNAPSHOT_TASK: asyncio.Task[None] | None = None
 _SNAPSHOT_STARTED = False
-# Background task target cycle. Each iteration sleeps for max(0, 1.0 -
-# elapsed_fanout). A fast fan-out (~0.3s) waits 0.7s; a slow one (>1s) loops
-# immediately. Combined with the frontend's 1s pull this gives ≤2s
+# Background task target cycle. Each iteration sleeps for max(0, 5.0 -
+# elapsed_fanout). A fast fan-out (~0.3s) waits ~4.7s; a slow one (>5s) loops
+# immediately. Combined with the frontend's 5s pull this gives ≤10s
 # end-to-end refresh.
-_SNAPSHOT_TARGET_CYCLE_S = 1.0
+_SNAPSHOT_TARGET_CYCLE_S = 5.0
 # A new snapshot is accepted only if it's non-empty AND retains at least this
 # fraction of the previous snapshot's aircraft count. Absorbs the "host
 # rate-limit blip" that used to drop the visible count from 3959 to 48.
@@ -608,20 +608,17 @@ async def _try_opensky_global() -> dict[str, Any] | None:
     return fc
 
 
-# OpenSky pull pacing. OpenSky's free budget is a daily credit pool, so we
-# CANNOT pull /states/all every 1s background tick. `_opensky_cached` pulls at
-# most once per (_OPENSKY_INTERVAL_S + adaptive backoff) and serves the last
-# good 13k FeatureCollection on every tick in between. Because the cached FC is
-# served forever until a newer pull replaces it, the snapshot aircraft COUNT
-# stays high even after the daily budget is spent — only position freshness for
-# OpenSky-only (oceanic) contacts degrades, and the per-cell grid keeps the
-# dense regions live. On a 429 we exponentially back off (capped) so a spent
-# budget stretches instead of hammering a host that's refusing us.
-# 15s between pulls: conserves the limited daily credit budget (a global
-# /states/all costs 4 credits; anonymous IP budget is ~400/day) while keeping
-# breadth positions fresh enough that frontend interpolation looks live. The
-# per-cell airplanes.live grid refreshes dense regions faster on top of this.
-_OPENSKY_INTERVAL_S = 15.0
+# OpenSky pull pacing. OpenSky's free budget is a daily credit pool that RESETS
+# at 00:00 UTC, so we pull /states/all exactly ONCE per UTC day: once on boot,
+# then once each time the UTC day rolls over. `_opensky_cached` serves the last
+# good ~13k FeatureCollection on every tick in between. Because the cached FC is
+# served forever until the next daily pull replaces it, the snapshot aircraft
+# COUNT stays high all day — only position freshness for OpenSky-only (oceanic)
+# contacts degrades, and the per-cell grid keeps the dense regions live. One
+# pull/day costs ~4 credits against the ~400/day anonymous budget, leaving the
+# pool almost untouched. On a 429 (or other failure) we exponentially back off
+# (capped) and retry within the same day's gate so a failed boot/midnight pull
+# doesn't strand us with no breadth for 24h.
 _OPENSKY_BACKOFF_CAP_S = 900.0
 # Always-anonymous token manager for the 429 fallback (separate IP budget).
 _ANON_TM = OpenSkyTokenManager("", "")
@@ -630,26 +627,49 @@ _ANON_TM = OpenSkyTokenManager("", "")
 # this, the grid is abandoned for the tick (its completed cells are already
 # cached) so a throttled airplanes.live can't stall the OpenSky-driven snapshot.
 _GRID_BUDGET_S = 8.0
+# Overall wall-clock cap on ONE repull fan-out. Every tier (OpenSky cache,
+# keyless feeds, firehose, grid) runs concurrently and is awaited only within
+# this deadline; a wedged upstream is dropped for the tick (its siblings'
+# completed results still merge) so the snapshot refresher never blocks past one
+# cycle. Sized above _GRID_BUDGET_S so the grid still gets its full slice when
+# it's the only tier in play.
+_FANOUT_BUDGET_S = 10.0
 _OPENSKY_FC: dict[str, Any] = {"type": "FeatureCollection", "features": []}
-_OPENSKY_AT: float = 0.0  # monotonic seconds of last pull attempt
+_OPENSKY_AT: float = 0.0  # monotonic seconds of last pull attempt (backoff pacing)
 _OPENSKY_BACKOFF_S: float = 0.0
+_OPENSKY_DAY: int = -1  # UTC day ordinal of last SUCCESSFUL pull (-1 = never)
 _OPENSKY_LOCK = asyncio.Lock()
 
 
+def _utc_day() -> int:
+    """UTC day ordinal (days since epoch). Increments exactly at 00:00 UTC —
+    the instant OpenSky's daily credit budget resets. time.time() is UTC, so
+    integer-dividing by 86400 gives a clean per-UTC-day bucket with no tz import."""
+    return int(time.time() // 86400)
+
+
 async def _opensky_cached() -> dict[str, Any] | None:
-    """Throttled OpenSky breadth. Pulls at most once per interval (+backoff);
-    serves the cached FeatureCollection between pulls."""
-    global _OPENSKY_FC, _OPENSKY_AT, _OPENSKY_BACKOFF_S
+    """OpenSky breadth, pulled ONCE per UTC day (once on boot, then at 00:00 UTC
+    when credits reset). Serves the cached FeatureCollection on every tick in
+    between. A failed pull leaves _OPENSKY_DAY behind so the next tick retries
+    (after 429 backoff) rather than waiting a full day for breadth."""
+    global _OPENSKY_FC, _OPENSKY_AT, _OPENSKY_BACKOFF_S, _OPENSKY_DAY
     async with _OPENSKY_LOCK:
+        today = _utc_day()
+        if _OPENSKY_DAY == today:
+            # Already pulled today — serve cache, don't spend another credit.
+            return _OPENSKY_FC if _OPENSKY_FC.get("features") else None
+        # Due for today's pull. Honor 429 backoff between retries so a failing
+        # boot/midnight pull doesn't hammer the host.
         age = time.monotonic() - _OPENSKY_AT if _OPENSKY_AT else float("inf")
-        if age < _OPENSKY_INTERVAL_S + _OPENSKY_BACKOFF_S:
+        if age < _OPENSKY_BACKOFF_S:
             return _OPENSKY_FC if _OPENSKY_FC.get("features") else None
         _OPENSKY_AT = time.monotonic()  # stamp before await so we don't double-pull
         try:
             fc = await _try_opensky_global()
         except httpx.HTTPStatusError as e:
             # 429 (or other status error): keep serving the last good FC and
-            # grow the backoff so we don't burn the daily credit budget.
+            # grow the backoff. _OPENSKY_DAY stays behind → retry next tick.
             if e.response is not None and e.response.status_code == 429:
                 _OPENSKY_BACKOFF_S = min(
                     _OPENSKY_BACKOFF_S * 2 + 15.0, _OPENSKY_BACKOFF_CAP_S
@@ -659,6 +679,7 @@ async def _opensky_cached() -> dict[str, Any] | None:
             return _OPENSKY_FC if _OPENSKY_FC.get("features") else None
         if fc and fc.get("features"):
             _OPENSKY_FC = fc
+            _OPENSKY_DAY = today  # mark today's pull done — no more pulls until 00:00 UTC
             _OPENSKY_BACKOFF_S = 0.0  # healthy — reset backoff
         return _OPENSKY_FC if _OPENSKY_FC.get("features") else None
 
@@ -838,12 +859,36 @@ async def _grid_throttled() -> list[dict[str, Any]]:
     return grid
 
 
+async def _await_within(
+    task: "asyncio.Future[Any]", deadline: float
+) -> Any:
+    """Await ``task`` but never past the fan-out ``deadline`` (monotonic secs).
+
+    Returns the task result, or None if it's already failed or can't finish in
+    time. A task that overruns is cancelled so it can't leak past the tick; its
+    siblings that already completed still merge. Keeps one wedged upstream from
+    stalling the snapshot refresher beyond _FANOUT_BUDGET_S."""
+    if task.done():
+        try:
+            return task.result()
+        except Exception:
+            return None
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        task.cancel()
+        return None
+    try:
+        return await asyncio.wait_for(task, timeout=remaining)
+    except Exception:  # TimeoutError, CancelledError, or upstream error
+        return None
+
+
 async def _do_global_fanout() -> dict[str, Any]:
     """Return a merged GeoJSON FeatureCollection of all globally airborne
     aircraft, unioned across every reachable source so the count approaches the
     ~13k aircraft actually airborne worldwide:
 
-      1. OpenSky /states/all (throttled+cached) — global breadth, ~13k.
+      1. OpenSky /states/all (once/UTC-day, cached) — global breadth, ~13k.
       2. Opportunistic single-shot firehose — overlays real-time global data on
          deploy hosts where one is reachable.
       3. airplanes.live /v2/point grid — dense-region freshness (sub-2s in busy
@@ -863,10 +908,11 @@ async def _do_global_fanout() -> dict[str, Any]:
     osky_task = asyncio.ensure_future(_opensky_cached())
     feeds_task = asyncio.ensure_future(_readsb_feeds())
     fh_task = asyncio.ensure_future(_firehose_throttled())
+    deadline = time.monotonic() + _FANOUT_BUDGET_S
 
-    # 1. Breadth — OpenSky global (~13k). Served from cache between paced pulls,
+    # 1. Breadth — OpenSky global (~13k). Served from cache between daily pulls,
     #    so it contributes its full count on every tick.
-    osky = await osky_task
+    osky = await _await_within(osky_task, deadline)
     if osky:
         for f in osky.get("features") or []:
             fid = f.get("id")
@@ -877,12 +923,12 @@ async def _do_global_fanout() -> dict[str, Any]:
     #    ultrafeeder) — full global aircraft.json at ~1s. Adds the aircraft
     #    OpenSky's feeders miss (+~1.3k measured) and is fresher, so it merges
     #    AFTER OpenSky.
-    feeds = await feeds_task
+    feeds = await _await_within(feeds_task, deadline)
     if feeds:
         _merge_raw_into(by_id, feeds)
 
     # 3. Opportunistic firehose (deploy hosts with a reachable global verb).
-    firehose = await fh_task
+    firehose = await _await_within(fh_task, deadline)
     if firehose:
         _merge_raw_into(by_id, firehose)
 
@@ -895,12 +941,14 @@ async def _do_global_fanout() -> dict[str, Any]:
     #    -boxed) only when everything else is down. A reachable host yields plenty
     #    and is never blocked, so a residential/feeder deploy still gets it.
     if len(by_id) < _GRID_SKIP_ABOVE:
-        try:
-            grid = await asyncio.wait_for(_grid_throttled(), timeout=_GRID_BUDGET_S)
-        except TimeoutError:
-            grid = []
-        if grid:
-            _merge_raw_into(by_id, grid)
+        grid_budget = min(_GRID_BUDGET_S, deadline - time.monotonic())
+        if grid_budget > 0:
+            try:
+                grid = await asyncio.wait_for(_grid_throttled(), timeout=grid_budget)
+            except TimeoutError:
+                grid = []
+            if grid:
+                _merge_raw_into(by_id, grid)
 
     return {"type": "FeatureCollection", "features": list(by_id.values())}
 
@@ -938,10 +986,10 @@ def _merge_with_previous(
 
 
 async def _refresh_snapshot_forever() -> None:
-    """Background task: refresh the sticky snapshot on a 1s target cycle.
+    """Background task: refresh the sticky snapshot on a 5s target cycle.
 
     Each iteration measures fan-out time and sleeps for the remainder of the
-    second (sleep = max(0, _SNAPSHOT_TARGET_CYCLE_S - elapsed)). A fast
+    cycle (sleep = max(0, _SNAPSHOT_TARGET_CYCLE_S - elapsed)). A fast
     fan-out doesn't burn the loop; a slow one loops immediately so we never
     fall further behind than upstream latency forces.
 
