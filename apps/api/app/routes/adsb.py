@@ -690,16 +690,15 @@ async def _firehose_throttled() -> list[dict[str, Any]] | None:
 # aircraft.json — no key, no Cloudflare block — so they add the aircraft
 # OpenSky's network misses (measured union ~14k vs ~12.7k OpenSky-only).
 #
-# RATE-LIMIT DISCIPLINE: we pull exactly ONE feed per cycle, round-robin, every
-# adsb_feed_interval_s (default 30 s). With two feeds each host is therefore hit
-# only once per ~60 s — gentle enough that no single API throttles us. Each
-# feed's last good slice is retained and the slices are unioned (deduped by
-# icao24) on every read, so the snapshot keeps all feeds' aircraft even though
-# only one refreshed this cycle. A slice older than _FEED_SLICE_MAX_AGE_S is
-# dropped so a dead feed's aircraft don't linger.
+# RATE-LIMIT DISCIPLINE without staleness: each feed has its OWN cadence
+# (_feed_interval) and we pull every feed that's due, concurrently. Full
+# aircraft.json mirrors refresh ~1 s and tolerate a 5 s poll, so positions stay
+# fresh (stale fixes are exactly what make a tracked aircraft jump). The
+# rate-limited /v2 APIs use the slow cadence. Each feed's last good slice is
+# retained + unioned (deduped by icao24); a slice older than _FEED_SLICE_MAX_AGE_S
+# is dropped so a dead feed's aircraft don't linger.
 _FEED_SLICES: dict[str, tuple[float, list[dict[str, Any]]]] = {}  # url -> (mono_ts, ac)
-_FEED_ROTATE_IDX: int = 0
-_READSB_NEXT_PULL: float = 0.0
+_FEED_NEXT_PULL: dict[str, float] = {}  # url -> next monotonic pull time
 _READSB_LOCK = asyncio.Lock()
 _FEED_SLICE_MAX_AGE_S = 180.0
 # Some hosts (adsb.lol) answer 451 to a non-browser User-Agent — send a real one.
@@ -711,6 +710,15 @@ _FEED_UA = (
 
 def _feed_urls() -> list[str]:
     return [u.strip() for u in get_settings().adsb_feed_urls.split(",") if u.strip()]
+
+
+def _feed_interval(url: str) -> float:
+    s = get_settings()
+    if "127.0.0.1" in url or "localhost" in url:
+        return s.adsb_feed_fast_interval_s  # sidecar — no rate limit, keep fresh
+    if "/v2/" in url or "/re-api" in url:
+        return s.adsb_feed_slow_interval_s  # rate-limit-sensitive API
+    return s.adsb_feed_interval_s  # full aircraft.json mirror
 
 
 async def _fetch_one_feed(client: httpx.AsyncClient, url: str) -> list[dict[str, Any]]:
@@ -732,30 +740,32 @@ async def _fetch_one_feed(client: httpx.AsyncClient, url: str) -> list[dict[str,
 
 
 async def _readsb_feeds() -> list[dict[str, Any]]:
-    """Union of recent keyless readsb feed slices; refreshes ONE feed per cycle.
+    """Union of recent keyless readsb feed slices.
 
-    Round-robin + paced (adsb_feed_interval_s) so no single aggregator is
-    rate-limited. Returns the deduped union of every non-stale slice.
+    Pulls every feed that is DUE (per-feed cadence) concurrently, so fresh
+    mirrors keep positions current without hammering the slow APIs. Returns the
+    deduped (by icao24) union of every non-stale slice.
     """
-    global _FEED_ROTATE_IDX, _READSB_NEXT_PULL
     urls = _feed_urls()
     if not urls:
         return []
-    interval = get_settings().adsb_feed_interval_s
-    if time.monotonic() >= _READSB_NEXT_PULL:
+    now = time.monotonic()
+    due = [u for u in urls if now >= _FEED_NEXT_PULL.get(u, 0.0)]
+    if due:
         async with _READSB_LOCK:
-            if time.monotonic() >= _READSB_NEXT_PULL:
-                idx = _FEED_ROTATE_IDX % len(urls)
-                url = urls[idx]
-                _FEED_ROTATE_IDX = idx + 1
-                ac = await _fetch_one_feed(get_client(), url)
-                if ac:
-                    _FEED_SLICES[url] = (time.monotonic(), ac)
-                # Pace off the NEXT pull regardless, so a failing feed doesn't
-                # hammer — it just gets retried after the interval in its turn.
-                _READSB_NEXT_PULL = time.monotonic() + interval
+            now = time.monotonic()
+            due = [u for u in urls if now >= _FEED_NEXT_PULL.get(u, 0.0)]
+            if due:
+                client = get_client()
+                results = await asyncio.gather(*(_fetch_one_feed(client, u) for u in due))
+                for url, ac in zip(due, results, strict=True):
+                    if ac:
+                        _FEED_SLICES[url] = (time.monotonic(), ac)
+                    # Re-arm even on failure so a dead feed is retried on its
+                    # cadence, not hammered every tick.
+                    _FEED_NEXT_PULL[url] = time.monotonic() + _feed_interval(url)
 
-    cutoff = time.monotonic() - max(_FEED_SLICE_MAX_AGE_S, 3 * interval)
+    cutoff = time.monotonic() - _FEED_SLICE_MAX_AGE_S
     merged: dict[str, dict[str, Any]] = {}
     for url in list(_FEED_SLICES):
         ts, ac = _FEED_SLICES[url]
@@ -801,6 +811,33 @@ async def _grid_fanout() -> list[dict[str, Any]]:
     return out
 
 
+# Grid dead-skip. From a datacenter egress IP every airplanes.live/adsb.lol
+# /v2/point cell is Cloudflare/451-blocked, so the grid yields ~nothing yet its
+# 134 cell host-walks (2 s connect each) drag _do_global_fanout out to ~15-20 s
+# — which froze the snapshot refresher and made tracked aircraft fly on
+# dead-reckoning for 20 s then JUMP. When the grid comes back near-empty we skip
+# it for a while so the fanout is driven by the fast keyless feeds (~1 s). A
+# reachable host (residential / feeder) yields plenty and is never skipped.
+_GRID_DEAD_SKIP_S = 30.0
+_GRID_NEXT_TRY: float = 0.0
+# Skip the (slow, server-blocked) grid entirely once the fast tiers already
+# cover the sky. The keyless feeds alone supply ~11k, so the grid only runs as a
+# fallback when feeds + OpenSky are below this — i.e. effectively never on a
+# healthy deploy.
+_GRID_SKIP_ABOVE = 3000
+
+
+async def _grid_throttled() -> list[dict[str, Any]]:
+    global _GRID_NEXT_TRY
+    if time.monotonic() < _GRID_NEXT_TRY:
+        return []
+    grid = await _grid_fanout()
+    yielded = len({(a.get("hex") or "").lower() for a in grid if a.get("hex")})
+    if yielded < _FALLBACK_MIN_AIRCRAFT:
+        _GRID_NEXT_TRY = time.monotonic() + _GRID_DEAD_SKIP_S
+    return grid
+
+
 async def _do_global_fanout() -> dict[str, Any]:
     """Return a merged GeoJSON FeatureCollection of all globally airborne
     aircraft, unioned across every reachable source so the count approaches the
@@ -826,7 +863,6 @@ async def _do_global_fanout() -> dict[str, Any]:
     osky_task = asyncio.ensure_future(_opensky_cached())
     feeds_task = asyncio.ensure_future(_readsb_feeds())
     fh_task = asyncio.ensure_future(_firehose_throttled())
-    grid_task = asyncio.ensure_future(_grid_fanout())
 
     # 1. Breadth — OpenSky global (~13k). Served from cache between paced pulls,
     #    so it contributes its full count on every tick.
@@ -850,15 +886,21 @@ async def _do_global_fanout() -> dict[str, Any]:
     if firehose:
         _merge_raw_into(by_id, firehose)
 
-    # 4. Dense-region freshness overlay — wins conflicts (merged last). Bounded
-    #    so a throttled grid can't hold the snapshot hostage; completed cells are
-    #    cached for the next tick regardless.
-    try:
-        grid = await asyncio.wait_for(grid_task, timeout=_GRID_BUDGET_S)
-    except TimeoutError:
-        grid = []
-    if grid:
-        _merge_raw_into(by_id, grid)
+    # 4. Per-cell grid — ONLY as a FALLBACK when the fast tiers came up thin. The
+    #    keyless feeds now supply ~11k at ~0.1s; on a datacenter IP every
+    #    /v2/point cell is Cloudflare/451-blocked and the 134 cell host-walks
+    #    dragged the fan-out to ~40s — which froze the snapshot refresher (~20s
+    #    cycles) and made tracked aircraft fly on dead-reckoning then JUMP. So we
+    #    skip the grid entirely once feeds + OpenSky cover the sky; it runs (time
+    #    -boxed) only when everything else is down. A reachable host yields plenty
+    #    and is never blocked, so a residential/feeder deploy still gets it.
+    if len(by_id) < _GRID_SKIP_ABOVE:
+        try:
+            grid = await asyncio.wait_for(_grid_throttled(), timeout=_GRID_BUDGET_S)
+        except TimeoutError:
+            grid = []
+        if grid:
+            _merge_raw_into(by_id, grid)
 
     return {"type": "FeatureCollection", "features": list(by_id.values())}
 
