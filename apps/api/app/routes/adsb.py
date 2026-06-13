@@ -780,12 +780,35 @@ def _feed_interval(url: str) -> float:
     return s.adsb_feed_interval_s  # full aircraft.json mirror
 
 
+def _feed_timeout(url: str) -> httpx.Timeout:
+    # httpx connect/read budget. theairtraffic.com gets a tight connect so a
+    # stalled handshake bails fast; the TOTAL wall-clock cap below is what bounds
+    # its slow body.
+    if "theairtraffic.com" in url:
+        return httpx.Timeout(5.0, connect=3.0)
+    return httpx.Timeout(12.0, connect=5.0)
+
+
+def _feed_total_s(url: str) -> float:
+    # Total wall-clock cap per feed, enforced with asyncio.wait_for. httpx's read
+    # timeout is PER-CHUNK, so theairtraffic.com's 3.6MB aircraft.json — which
+    # streams steadily over 4-9s — never trips a 5s read timeout and was pushing
+    # the fan-out onto its 10s cap, holding the refresh well above the 5s target.
+    # A hard 5s total aborts a slow cycle instead; its aircraft persist via the
+    # 180s carry-forward merge and hpradar (a fast full mirror) overlaps it, so a
+    # dropped slow pull costs ~nothing. Other feeds keep the generous budget.
+    if "theairtraffic.com" in url:
+        return 5.0
+    return 13.0
+
+
 async def _fetch_one_feed(client: httpx.AsyncClient, url: str) -> list[dict[str, Any]]:
     try:
-        r = await client.get(
-            url, timeout=httpx.Timeout(12.0, connect=5.0), headers={"User-Agent": _FEED_UA}
+        r = await asyncio.wait_for(
+            client.get(url, timeout=_feed_timeout(url), headers={"User-Agent": _FEED_UA}),
+            timeout=_feed_total_s(url),
         )
-    except (httpx.TimeoutException, httpx.TransportError):
+    except (httpx.TimeoutException, httpx.TransportError, TimeoutError):
         return []
     if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
         return []
