@@ -702,6 +702,11 @@ _FEED_ROTATE_IDX: int = 0
 _READSB_NEXT_PULL: float = 0.0
 _READSB_LOCK = asyncio.Lock()
 _FEED_SLICE_MAX_AGE_S = 180.0
+# Some hosts (adsb.lol) answer 451 to a non-browser User-Agent — send a real one.
+_FEED_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 def _feed_urls() -> list[str]:
@@ -710,13 +715,18 @@ def _feed_urls() -> list[str]:
 
 async def _fetch_one_feed(client: httpx.AsyncClient, url: str) -> list[dict[str, Any]]:
     try:
-        r = await client.get(url, timeout=httpx.Timeout(12.0, connect=5.0))
+        r = await client.get(
+            url, timeout=httpx.Timeout(12.0, connect=5.0), headers={"User-Agent": _FEED_UA}
+        )
     except (httpx.TimeoutException, httpx.TransportError):
         return []
     if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
         return []
     try:
-        return r.json().get("aircraft") or []
+        j = r.json()
+        # readsb tar1090 uses "aircraft"; ADSBx-v2 (adsb.lol) uses "ac". Both
+        # carry the same readsb fields (hex/lat/lon/track/alt_baro/gs).
+        return j.get("aircraft") or j.get("ac") or []
     except Exception:  # noqa: BLE001 — non-JSON / truncated body
         return []
 

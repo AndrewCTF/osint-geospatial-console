@@ -58,7 +58,8 @@ class Settings(BaseSettings):
     # cadence only affects the EXTRA aircraft these feeds add.
     adsb_feed_urls: str = (
         "https://globe.theairtraffic.com/data/aircraft.json,"
-        "https://skylink.hpradar.com/data/aircraft.json"
+        "https://skylink.hpradar.com/data/aircraft.json,"
+        "https://api.adsb.lol/v2/point/0/0/20000"  # ADSBx-v2 'ac' key, ~12.5k global
     )
     adsb_feed_interval_s: float = 30.0  # rotate one feed per this interval (30 s–1 m)
 
