@@ -839,6 +839,16 @@ async def _refresh_snapshot_forever() -> None:
                 if accept:
                     _LATEST_SNAPSHOT = fc
                     _LATEST_SNAPSHOT_AT = time.monotonic()
+            # Mirror accepted aircraft fixes into the history store for 3D
+            # replay. Outside the snapshot lock; ingest_aircraft only buffers
+            # in memory (rate-limited, no I/O) so it can't stall the tick.
+            if accept:
+                try:
+                    from app import history  # noqa: PLC0415
+
+                    history.ingest_aircraft(fc.get("features") or [])
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception:
             # Never let the background loop die — a transient httpx /
             # cancellation / asyncio exception just rolls into the next tick.

@@ -27,9 +27,11 @@ from app.routes import eq as eq_routes
 from app.routes import events as events_routes
 from app.routes import firms as firms_routes
 from app.routes import health as health_routes
+from app.routes import history as history_routes
 from app.routes import intel as intel_routes
 from app.routes import jamming as jamming_routes
 from app.routes import maritime as maritime_routes
+from app.routes import news as news_routes_mod
 from app.routes import search as search_routes
 from app.routes import seismic as seismic_routes
 from app.routes import space as space_routes
@@ -132,6 +134,8 @@ def create_app() -> FastAPI:
     app.include_router(jamming_routes.router)
     app.include_router(cams_routes.router)
     app.include_router(intel_routes.router)
+    app.include_router(news_routes_mod.router)
+    app.include_router(history_routes.router)
 
     return app
 

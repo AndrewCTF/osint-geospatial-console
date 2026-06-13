@@ -499,6 +499,35 @@ async def deep_analyze(
     }
 
 
+# ── news intelligence (debias / fact-check) ──────────────────────────────────
+
+
+@mcp.tool()
+async def news_analysis() -> dict[str, Any]:
+    """Cross-source, debiased world-news intelligence.
+
+    Scrapes ~12 outlets (BBC, Reuters, AP, Al Jazeera, Guardian, CNN, Fox, …),
+    then a reasoning model strips bias/propaganda and separates VERIFIED FACTS
+    (corroborated by ≥2 independent outlets) from ATTRIBUTED CLAIMS and
+    rhetoric. A leader promising "the war will end soon" is flagged as rhetoric,
+    never reported as fact. Returns events with neutral_summary, verified_facts,
+    attributed_claims, bias_flags, propaganda_techniques, rhetoric_flags and a
+    confidence. May take ~30s when the cache is cold (it reasons over the feed).
+    """
+    return await _get("/api/news/analysis")
+
+
+@mcp.tool()
+async def fact_check(claim: str) -> dict[str, Any]:
+    """Adjudicate one free-text claim against current world-news headlines.
+
+    Returns ``{verdict: true|false|misleading|unverified, reasoning,
+    supporting_sources, confidence}``. Use it to sanity-check a statement before
+    treating it as fact.
+    """
+    return await _get("/api/news/factcheck", {"claim": claim})
+
+
 # ── entrypoint ─────────────────────────────────────────────────────────────────
 
 
