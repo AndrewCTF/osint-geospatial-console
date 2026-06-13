@@ -188,7 +188,8 @@ async def intel_sources() -> dict[str, Any]:
             "opensky /states/all (anonymous — the ~13k global breadth tier; "
             "OAuth creds only raise the daily credit budget)",
             "ais (digitraffic Finland/Baltic)",
-            "ais firehose (Kystverket NMEA — keyless global vessel stream)",
+            "ais firehose (Kystverket NMEA — keyless, Northern Europe only; "
+            "global vessels still need AISStream)",
             "jamming (derived from ADS-B NACp/NIC)",
             "usgs quakes",
         ],

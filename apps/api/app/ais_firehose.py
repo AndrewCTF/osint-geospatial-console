@@ -1,4 +1,4 @@
-"""Keyless global AIS firehose — Kystverket public NMEA stream.
+"""Keyless AIS firehose — Kystverket public NMEA stream (Northern Europe).
 
 The browser AIS layer (``/ws/ais``) normally needs an ``AISSTREAM_KEY``. Norway's
 Kystverket publishes an anonymous, unauthenticated AIS NMEA feed over TCP
@@ -59,6 +59,7 @@ def stats() -> dict[str, Any]:
         **_stats,
         "enabled": s.ais_firehose_enabled,
         "host": f"{s.ais_firehose_host}:{s.ais_firehose_port}",
+        "coverage": "Norway + Arctic/North Sea (regional, NOT global)",
         "names_cached": len(_name_by_mmsi),
     }
 
