@@ -37,10 +37,25 @@ Non-goals here: imagery reconstruction model (Spec 4), 3D reconstruction (Spec 5
 | AWS Open Data | GOES-19 (East), Himawari-9 | ~2 km, ~10 min | public S3 (`s3://noaa-goes19`, `s3://noaa-himawari`) | No key (anon S3) |
 | NOAA GMGSI | geostationary global mosaic | ~global, hourly | public S3 | No key |
 | Copernicus Data Space / Sentinel Hub | Sentinel-2 (10 m optical), Sentinel-1 (C-band SAR) | 5–12 day | OGC WMTS + Process API (OAuth) | **Yes** |
+| Copernicus Data Space / Sentinel Hub | **Sentinel-3** OLCI (300 m optical), SLSTR (500 m–1 km thermal/IR), SRAL (radar altimeter) | ~1–2 day | OGC WMTS + Process API (OAuth) | **Yes** |
 | USGS / AWS | Landsat 8/9 | 30 m, 16 day | also in GIBS; M2M/EarthExplorer or AWS | optional |
 | ASF DAAC | NISAR (L-band SAR) | live since Feb 2026, 36–72 h latency | Vertex / Earthdata + OPERA tiles | **Yes (Earthdata)** |
 
-Keyless tier (GIBS + AWS geostationary) ships first and alone supports day-by-day scrubbing. Keyed tier (CDSE/Sentinel Hub + NISAR/Earthdata) adds 10 m optical and SAR.
+Keyless tier (GIBS + AWS geostationary) ships first and alone supports day-by-day scrubbing. Keyed tier (CDSE/Sentinel Hub + NISAR/Earthdata) adds 10 m optical and SAR. CDSE creds + NISAR Earthdata token are configured and OAuth-verified (token mint OK).
+
+### 3.1a Radar / SAR satellites (called out)
+
+Imaging radar penetrates cloud + night — the backbone for dark-vessel (Spec 2) and post-strike damage (Spec 3) when optical is blocked.
+
+| Radar source | Band | Use | Access |
+|---|---|---|---|
+| **Sentinel-1** (A/C) | C-band | dark-vessel, change/damage, all-weather imaging | CDSE (have creds) |
+| **NISAR** | L-band | deeper penetration, InSAR coherence (collapse detection) | ASF DAAC / Earthdata (have token) |
+| **Sentinel-3 SRAL** | Ku/C altimeter | sea-surface height / maritime context (not imaging) | CDSE |
+| Commercial SAR — ICEYE / Capella / Umbra | X-band | sub-meter, frequent revisit, tasking | paid/optional, flagged |
+| RADARSAT-2 / RCM, SAOCOM | C / L-band | extra SAR coverage | restricted/licensed, optional |
+
+InSAR coherence loss between two SAR passes is a strong building-collapse signal — feeds Spec 3 as a SAR-only damage cue and Spec 2 stays optical-independent.
 
 ### 3.2 Backend
 
@@ -143,12 +158,13 @@ Repo bars hold: `pnpm -r typecheck` green, `cd apps/api && .venv/bin/pytest -q` 
 - [ ] For a before/after pair over a known struck AOI, the report returns a non-zero destroyed/major count with an overlay, and a day-by-day range returns one entry per day.
 - [ ] With no vision key, the baseline-only path still returns a change map (no crash).
 
-## 9. Keys / config (new settings)
+## 9. Keys / config
 
-- `sentinelhub_client_id`, `sentinelhub_client_secret` (CDSE OAuth).
-- `earthdata_token` (ASF/NISAR, LANCE NRT).
-- `vision_llm_provider`, `vision_llm_key`, `vision_llm_model`.
-- `imagery_default_aoi`, `dark_vessel_aoi_bbox`.
+Reuse existing `Settings` fields where present; add the rest during implementation. Secrets live ONLY in the gitignored `.env` (root), never committed.
+- `cdse_client_id`, `cdse_client_secret` — **exist** in `config.py`; set + OAuth-verified (Sentinel-1/2/3 via Sentinel Hub).
+- `earthdata_token` — **new field** to add (ASF/NISAR, LANCE NRT); token already in `.env`, decoded valid to ~2026-08-14. Pydantic `extra="ignore"` means it sits harmlessly in `.env` until the field is added.
+- `vision_llm_provider`, `vision_llm_key`, `vision_llm_model` — new (damage assessment).
+- `imagery_default_aoi`, `dark_vessel_aoi_bbox` — new.
 All optional; absence degrades the relevant layer/feature, never breaks keyless paths (CLAUDE.md guardrail).
 
 ## 10. Risks / phasing
