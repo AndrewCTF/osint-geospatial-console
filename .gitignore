@@ -30,3 +30,6 @@ coverage/
 /*.webp
 apps/ml/fusion/data/
 apps/ml/fusion/runs/
+apps/ml/fusion/.mamba-cuda/
+apps/ml/fusion/EOGS/
+apps/ml/fusion/.mamba-root/
