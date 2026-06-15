@@ -249,6 +249,11 @@ export function GlobeCanvas({
       gibsLayerRef.current = lyr;
     }
     scene.requestRender();
+    // overlayOpacity is read only to seed the freshly-added layer's initial
+    // alpha; live opacity changes are handled by the dedicated effect below
+    // (which avoids a tile-flashing layer rebuild), so it must NOT be a
+    // dependency here or every slider tick would re-add the whole layer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageryOverlay]);
 
   // Live overlay opacity — set the layer alpha without rebuilding the layer
@@ -426,8 +431,10 @@ export function GlobeCanvas({
       viewer.destroy();
       viewerRef.current = null;
     };
-    // Intentionally exclude imageryMode/enableGoogle3D — they are handled by
-    // the swap effect below so toggling never remounts the viewer.
+    // Intentionally exclude imageryMode/enableGoogle3D/googleApiKey — the stack
+    // is handled by the swap effect below and the Google key is read once at
+    // construction, so toggling never remounts the viewer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ionToken, registry, onViewerReady]);
 
   // Swap the imagery stack in place whenever imageryMode (or its inputs)
