@@ -24,39 +24,8 @@ import { apiFetch } from '../../transport/http.js';
 const ROT_EPSILON = 0.01; // ~0.57°
 const SCALE_EPSILON = 0.02;
 
-// Aircraft dead-reckoning horizon. When a fix arrives we also add a
-// predicted sample this many seconds ahead along velocity/track, so the
-// interpolator always has a forward segment to fly between (possibly
-// bursty) fixes instead of freezing at the last sample and then rushing.
-const DR_HORIZON_S = 90;
 const FAR_FUTURE = Cesium.JulianDate.fromIso8601('2200-01-01T00:00:00Z');
 const EPOCH_START = Cesium.JulianDate.fromIso8601('1970-01-01T00:00:00Z');
-
-// Great-circle projection of (lon, lat) `dtSec` seconds ahead at
-// `velocityMs` along bearing `trackDeg`.
-function deadReckon(
-  lon: number,
-  lat: number,
-  velocityMs: number,
-  trackDeg: number,
-  dtSec: number,
-): [number, number] {
-  const R = 6_371_000;
-  const d = (velocityMs * dtSec) / R;
-  const brg = Cesium.Math.toRadians(trackDeg);
-  const lat1 = Cesium.Math.toRadians(lat);
-  const lon1 = Cesium.Math.toRadians(lon);
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brg),
-  );
-  const lon2 =
-    lon1 +
-    Math.atan2(
-      Math.sin(brg) * Math.sin(d) * Math.cos(lat1),
-      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
-    );
-  return [Cesium.Math.toDegrees(lon2), Cesium.Math.toDegrees(lat2)];
-}
 
 // Initial great-circle bearing (deg, 0=N) from point 1 to point 2. Used as a
 // heading fallback so an icon whose feed omits track/cog still points the way
@@ -183,11 +152,13 @@ export class PollGeoJsonAdapter implements LayerAdapter {
   // over rendering it).
   private ownedIcao = new Map<string, string>();
   // entityId → epoch seconds of the newest position fix we've sampled.
-  // Lets the aircraft motion model skip polls that carry no NEW fix (the
-  // backend snapshot refreshes faster than most aircraft fixes update), so
-  // the tweener keeps flying the dead-reckoned segment instead of getting
-  // a duplicate sample stamped at receipt time.
-  private lastFixEpoch = new Map<string, number>();
+  // entityId → last anchored [lon, lat, wallClockMs]. A new fix is detected by
+  // position change (the feed re-sends the same fix each poll and seen_at is
+  // usually absent), so an unchanged position HOLDs instead of re-anchoring —
+  // the cure for the per-poll oscillation that looked like looping/teleporting.
+  // The timestamp lets us glide each move over the REAL interval since the last
+  // fix, so motion matches the aircraft's true speed instead of rushing.
+  private lastAnchorLL = new Map<string, [number, number, number]>();
   // entityId → last [lon, lat], so we can derive a heading from movement when
   // the feed doesn't carry track/cog (otherwise the icon points north).
   private lastPos = new Map<string, [number, number]>();
@@ -248,7 +219,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       aircraftDedup.release(icao, layerId);
     }
     this.ownedIcao.clear();
-    this.lastFixEpoch.clear();
+    this.lastAnchorLL.clear();
     this.lastPos.clear();
     try {
       this.props.ctx.viewer.dataSources.remove(this.ds, true);
@@ -456,7 +427,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       if (existing) {
         if (this.props.styleKind === 'aircraft') {
           // Aircraft motion model — time-anchored samples + dead reckoning.
-          this.upsertAircraftSamples(existing, id, props, lon, lat, alt ?? 0);
+          this.upsertAircraftSamples(existing, id, lon, lat, alt ?? 0);
         } else if (isTrackable) {
           // Stationary-entity bypass: if the new position is within 100m of
           // the previous one (parked aircraft, anchored vessel), don't churn
@@ -548,7 +519,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
         // flying its dead-reckoned segment instead of sitting frozen until
         // its next fix arrives.
         if (this.props.styleKind === 'aircraft') {
-          this.upsertAircraftSamples(added, id, props, lon, lat, alt ?? 0);
+          this.upsertAircraftSamples(added, id, lon, lat, alt ?? 0);
         }
       }
     }
@@ -560,7 +531,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     for (const oldId of this.seenIds) {
       if (!nextIds.has(oldId)) {
         entities.removeById(oldId);
-        this.lastFixEpoch.delete(oldId);
+        this.lastAnchorLL.delete(oldId);
         this.lastPos.delete(oldId);
         const icao = this.ownedIcao.get(oldId);
         if (icao) {
@@ -575,71 +546,53 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     this.props.ctx.viewer.scene.requestRender();
   }
 
-  // Aircraft motion model — present-time anchoring + short-horizon dead
-  // reckoning. This is the core anti-teleport mechanism.
+  // Aircraft motion model — glide to the newest fix, HOLD, never extrapolate.
   //
-  // Fixes arrive bursty: the backend snapshot refreshes every ~1-2 s in good
-  // weather but tens of seconds when upstreams throttle, and each aircraft's
-  // own fix carries `seen_pos_s` of lag on top (an OpenSky cached snapshot or
-  // a carried-forward contact can be 10-30 s+ stale).
+  // The feed re-sends an aircraft's LAST fix on every poll until a fresh
+  // upstream fix arrives, and `seen_at` is usually absent, so a timestamp can't
+  // distinguish "new fix" from "same fix re-sent". Earlier attempts dead-reckoned
+  // the anchor forward by `seen_pos_s` and laid a 90 s forward PREDICTION; on
+  // stale, unchanging positions that re-anchored every poll and oscillated
+  // (glide out on the prediction, snap back to the stale anchor) — the "looping"
+  // and "teleporting" the operator saw, made worse by a Lagrange curve through
+  // the three points.
   //
-  // The teleport came from anchoring the real sample at its OBSERVATION time
-  // (seen_at − seen_pos), which is in the PAST relative to the simulation
-  // clock whenever the fix is stale. `removeSamples([fixJD, FAR_FUTURE])` then
-  // wiped the sample the icon was being rendered at and dropped a fresh anchor
-  // in the past, so the rendered position "now" became (now − fixJD)/horizon
-  // along a freshly-recomputed dead-reckon line — the icon hopped to a new
-  // point on a new line every poll instead of continuing from where it was.
-  //
-  // Fix — three samples, all at or after the present clock so the curve is
-  // continuous from the icon's CURRENT on-screen position and only ever
-  // corrects FORWARD:
-  //   1. BRIDGE: the position the icon is rendered at right now (read at t0
-  //      BEFORE mutating samples) is kept as the sample immediately preceding
-  //      the present, so the tweener flies a continuous path out of where the
-  //      icon actually is — never a backward snap.
-  //   2. ANCHOR (now): the reported fix dead-reckoned forward by its own
-  //      `seen_pos_s` lag to where the aircraft IS at t0, placed at t0. A stale
-  //      fix is advanced to the present instead of teleporting the icon back to
-  //      a 20 s-old location.
-  //   3. PREDICT (t0 + DR_HORIZON_S): the fix projected one horizon ahead along
-  //      velocity/track, so the interpolator always has a forward segment to
-  //      glide along between (possibly bursty) polls.
-  // When the next fix lands, samples at/after the present are dropped and
-  // re-anchored, so each poll is a small forward correction — never a hop.
+  // Fix: detect a new fix by POSITION CHANGE, not time. If the position is the
+  // same as last anchored, HOLD (return). When it genuinely moves, glide from
+  // where the icon is rendered RIGHT NOW to the new reported position over ~one
+  // poll interval with LINEAR interpolation, then HOLD. No forward extrapolation
+  // past the real fix, no projecting the anchor ahead — just interpolate between
+  // the last shown point and the new truth. Smooth, and it can never loop or
+  // snap.
   private upsertAircraftSamples(
     entity: Cesium.Entity,
     id: string,
-    props: Record<string, unknown>,
     lon: number,
     lat: number,
     alt: number,
   ): void {
     const t0 = this.props.ctx.viewer.clock.currentTime;
-    const seenPos = typeof props['seen_pos_s'] === 'number' ? (props['seen_pos_s'] as number) : 0;
-    const seenAt = typeof props['seen_at'] === 'number' ? (props['seen_at'] as number) : null;
-    const fixEpoch = (seenAt ?? Date.now() / 1000) - seenPos;
-
-    const vel = props['velocity_ms'];
-    const trk = props['track_deg'];
-    const onGround = props['on_ground'] === true;
-    const hasVector =
-      !onGround && typeof vel === 'number' && vel > 1 && typeof trk === 'number';
 
     let sampled = entity.position as Cesium.SampledPositionProperty | undefined;
     const isSampled = sampled instanceof Cesium.SampledPositionProperty;
-    const last = this.lastFixEpoch.get(id);
-    if (isSampled && last != null && fixEpoch <= last) {
-      // No NEW observation this poll (the snapshot refreshes faster than most
-      // aircraft fixes). Keep flying the existing forward prediction instead of
-      // re-stamping a duplicate sample at the present — re-anchoring an
-      // unchanged fix would repeatedly reset the same segment and stall motion.
-      return;
-    }
 
-    // Capture where the icon is rendered RIGHT NOW (at the simulation clock)
-    // before we touch any samples. This is the visual anchor: the new path must
-    // depart continuously from here so the icon never snaps backward.
+    // New fix? Decide by POSITION CHANGE, not time (the feed re-sends the same
+    // fix every poll and seen_at is usually absent). If it hasn't moved since we
+    // last anchored, HOLD — re-anchoring an unchanged fix every poll is what made
+    // the icon oscillate (glide out, snap back = the looping).
+    const prev = this.lastAnchorLL.get(id);
+    let moveDist = 0;
+    if (prev) {
+      moveDist = Cesium.Cartesian3.distance(
+        Cesium.Cartesian3.fromDegrees(prev[0], prev[1]),
+        Cesium.Cartesian3.fromDegrees(lon, lat),
+      );
+      if (isSampled && moveDist < 25) return; // same fix re-sent — hold, don't re-anchor
+    }
+    const nowMs = Date.now();
+
+    // Where the icon is rendered RIGHT NOW — the continuity anchor, so motion
+    // departs from where it visually is and never snaps.
     const renderedNow = isSampled
       ? (sampled!.getValue(t0) as Cesium.Cartesian3 | undefined)
       : (entity.position?.getValue(t0) as Cesium.Cartesian3 | undefined);
@@ -647,70 +600,54 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     if (!isSampled) {
       sampled = new Cesium.SampledPositionProperty();
       sampled.setInterpolationOptions({
-        interpolationAlgorithm: Cesium.LagrangePolynomialApproximation,
-        interpolationDegree: 2,
+        interpolationAlgorithm: Cesium.LinearApproximation,
+        interpolationDegree: 1,
       });
       sampled.forwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
       sampled.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
       entity.position = sampled;
     }
 
-    // Advance the reported fix to the PRESENT. The position the feed gives us is
-    // `seenPos` seconds old; dead-reckon it forward by that lag (when we have a
-    // vector) so the anchor we drop at t0 is where the aircraft IS now, not
-    // where it was. Without this a 20 s-stale fix would yank the icon back 20 s
-    // of travel each poll — the teleport.
-    let anchorLon = lon;
-    let anchorLat = lat;
-    if (hasVector && seenPos > 0) {
-      [anchorLon, anchorLat] = deadReckon(lon, lat, vel as number, trk as number, seenPos);
-    }
-    const anchorPos = Cesium.Cartesian3.fromDegrees(anchorLon, anchorLat, alt);
-
-    // Re-anchor: drop everything at/after a hair before the present (the old
-    // prediction + any prior present-anchor) so the curve bends to the fresh
-    // truth, then lay down a continuous 3-point path:
-    //   bridge (just before now) → anchor (now) → prediction (now + horizon).
-    const bridgeJD = Cesium.JulianDate.addSeconds(t0, -0.5, new Cesium.JulianDate());
+    // Glide from the current on-screen position to the NEW reported position over
+    // the REAL interval since this aircraft's last fix, then HOLD. Matching the
+    // glide to the true inter-fix gap means the icon moves at the aircraft's
+    // actual speed — no freeze-then-rush (a fixed short glide compressed a 4 s,
+    // multi-km move into ~1.5 s, which read as a jump). No forward extrapolation
+    // past the real fix (that, with noisy headings, swung the icon in loops); no
+    // projecting the anchor ahead by seen_pos_s (that marched it past truth then
+    // snapped back = the teleport). Just linear interpolation between the last
+    // shown point and the new truth, paced to reality.
+    // Pace the glide to the real inter-fix interval, but never let the icon dart
+    // faster than a fast jet: clamp apparent ground speed to ~300 m/s so a large
+    // delta (a stale fix catching up, or a bad jump) SLIDES smoothly instead of
+    // streaking across the map.
+    const sinceLastS = prev ? (nowMs - prev[2]) / 1000 : this.props.intervalSec;
+    const glideS = Math.min(20, Math.max(1.5, sinceLastS, moveDist / 300));
+    const arriveJD = Cesium.JulianDate.addSeconds(t0, glideS, new Cesium.JulianDate());
+    const cutFrom = Cesium.JulianDate.addSeconds(t0, -0.25, new Cesium.JulianDate());
     sampled!.removeSamples(
       new Cesium.TimeInterval({
-        start: bridgeJD,
+        start: cutFrom,
         stop: FAR_FUTURE,
         isStartIncluded: true,
         isStopIncluded: true,
       }),
     );
-    // Bridge sample: keep the icon's current on-screen position as the point
-    // immediately preceding the present so motion flows OUT of where it is.
-    if (renderedNow) sampled!.addSample(bridgeJD, renderedNow);
-    sampled!.addSample(t0.clone(), anchorPos);
-
-    // Forward prediction: only for airborne aircraft with a usable vector.
-    // Parked / vectorless contacts simply HOLD at the present anchor.
-    if (hasVector) {
-      const [plon, plat] = deadReckon(
-        anchorLon,
-        anchorLat,
-        vel as number,
-        trk as number,
-        DR_HORIZON_S,
-      );
-      const predJD = Cesium.JulianDate.addSeconds(t0, DR_HORIZON_S, new Cesium.JulianDate());
-      sampled!.addSample(predJD, Cesium.Cartesian3.fromDegrees(plon, plat, alt));
-    }
+    if (renderedNow) sampled!.addSample(t0.clone(), renderedNow);
+    sampled!.addSample(arriveJD, Cesium.Cartesian3.fromDegrees(lon, lat, alt));
 
     // Bounded memory: prune samples older than 30 minutes.
-    const cutoff = Cesium.JulianDate.addSeconds(t0, -1800, new Cesium.JulianDate());
+    const pruneCut = Cesium.JulianDate.addSeconds(t0, -1800, new Cesium.JulianDate());
     sampled!.removeSamples(
       new Cesium.TimeInterval({
         start: EPOCH_START,
-        stop: cutoff,
+        stop: pruneCut,
         isStartIncluded: true,
         isStopIncluded: false,
       }),
     );
 
-    this.lastFixEpoch.set(id, fixEpoch);
+    this.lastAnchorLL.set(id, [lon, lat, nowMs]);
   }
 
   private applyStyle(
