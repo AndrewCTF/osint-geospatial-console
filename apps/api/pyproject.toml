@@ -3,6 +3,7 @@ name = "osint-api"
 version = "0.1.0"
 description = "OSINT geospatial console — FastAPI backend"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 # NOTE: Postgres/Timescale + Redis are Phase 2 (the observation store
 # migrates to a hypertable per plan §locked-decisions #5). Their client libs
 # (sqlalchemy/asyncpg/redis/apscheduler) were removed from Phase 1 deps

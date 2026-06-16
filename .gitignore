@@ -10,6 +10,10 @@ __pycache__/
 .DS_Store
 .env
 .env.local
+*.env
+# Local agent/editor configs that may hold API keys — never commit.
+opencode.jsonc
+.opencode.json
 *.log
 coverage/
 .vite/
