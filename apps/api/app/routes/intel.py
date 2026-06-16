@@ -350,6 +350,20 @@ async def intel_sources() -> dict[str, Any]:
             "firms_fires": bool(s.firms_map_key),
             "opensky_authed": bool(s.opensky_client_id and s.opensky_client_secret),
             "gfw_dark_vessels": bool(s.gfw_token),
+            "acled_events": bool(s.acled_key),
+            "cloudflare_outages": bool(s.cloudflare_token),
+            "openaip": bool(s.openaip_key),
+        },
+        "key_gated_note": (
+            "true = key is CONFIGURED, not proven working — a set key can still "
+            "401 or be expired. Hit the feed to confirm liveness."
+        ),
+        "degraded": {
+            "adsb_single_shot_firehose": (
+                "adsb.fi 403 / adsb.lol 451 / /v2/all* 404 from most datacenter "
+                "egress IPs; used opportunistically. OpenSky /states/all is the "
+                "breadth source."
+            ),
         },
         "ais_firehose": ais_firehose.stats(),
         "ais_keyless": ais_keyless.stats(),

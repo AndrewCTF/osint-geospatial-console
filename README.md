@@ -1,6 +1,12 @@
-# OSINT Geospatial Console
+# Velocity
 
-A single-analyst, defence/offence-grade open-source intelligence platform: a 3D/4D Cesium globe over ~60 free/open data sources, with a server-side fusion engine that correlates feeds (AIS+SAR for dark vessels, ADS-B NACp clusters for GPS jamming, BGP/Cloudflare for outages, etc.).
+**An all-source intelligence globe** — <https://projectvelocity.org>
+
+A single-analyst, defence-grade open-source intelligence platform: a 3D/4D Cesium globe over **58 free/open upstream feeds** (measured — see `/api/intel/sources`), with a server-side fusion engine that correlates them across domains — AIS+SAR for dark vessels, ADS-B NACp clusters for GPS jamming, IODA/Cloudflare for internet outages — into single cross-domain incidents.
+
+> **Phase-1 state is ephemeral.** Observations, incidents, and AOIs live
+> in-process; a backend restart clears them. Durable history (Postgres + PostGIS
+> + TimescaleDB) is Phase 2 — don't treat this as a system of record yet.
 
 It is also a **Model Context Protocol** server: an AI agent can query the same live feeds (aircraft, vessels, GPS jamming, fused anomalies) as distilled JSON — see the [MCP section](#mcp-server--query-the-live-console-from-an-ai-agent) below.
 
@@ -84,6 +90,26 @@ lot of VRAM, and a low-VRAM "minimum" only applies to 2D-dark.
 **Backend (server):** Python 3.12, ~1 GB RAM, outbound HTTPS — runs on a small
 VPS or the same box; not the bottleneck.
 
+## What you get with zero keys
+
+Every key is optional; the app boots and is useful with none. Keys only *add* reach:
+
+| Capability | Keyless? | Key adds |
+| --- | --- | --- |
+| Aircraft (~13k global, ADS-B) | ✅ | OpenSky OAuth raises the daily credit budget |
+| Vessels — AIS, Northern Europe / Baltic | ✅ | AISStream key → global AIS |
+| GPS jamming, dark vessels (SAR), quakes, cables, satellites | ✅ | — |
+| Events (GDELT / EONET), cyber outages, news + fact-check, webcams | ✅ | — |
+| Wildfires (NASA FIRMS) | — | `FIRMS_MAP_KEY` |
+| Conflict events (ACLED) | — | ACLED key (non-commercial / academic) |
+
+## Export
+
+`GET /api/export?fmt=geojson|csv&kinds=aircraft,vessels&bbox=min_lon,min_lat,max_lon,max_lat`
+downloads the current live picture (the same snapshot the globe renders) as
+GeoJSON (QGIS / kepler.gl / Leaflet) or CSV. `bbox` clips to a viewport; `kinds`
+is comma-separated (default `aircraft`); vessels are best-effort.
+
 ## Tests
 
 ```bash
@@ -156,3 +182,11 @@ Ollama down → analysis falls back to raw intel JSON.
 - [~] Phase 4 — Advanced sensors + AI — **MCP server + intel API shipped** (agent access, local Ollama analysis)
 
 See [the plan](.) for detail.
+
+## License
+
+[AGPL-3.0-or-later](./LICENSE) — covers Velocity's **source code**. Upstream **data
+carries its own licenses**; several feeds are non-commercial / academic (e.g.
+ACLED, adsb.fi, OpenSky). See [`NOTICE`](./NOTICE) for per-source attribution and
+terms, and verify each upstream's current terms before any commercial or
+redistributive use.
