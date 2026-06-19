@@ -22,7 +22,24 @@ export interface AircraftEnrichment {
   photo_link?: string | null;
   /** Planespotters license string (e.g. "CC BY-SA 4.0"). */
   photo_license?: string | null;
+  /** Departure airport (adsbdb route lookup by callsign). */
+  origin?: Airport | null;
+  /** Destination airport — its lat/lon drives the ETA / distance-to-go calc. */
+  destination?: Airport | null;
+  /** Operating airline name from the route lookup. */
+  route_airline?: string | null;
   source?: string;
+}
+
+/** Airport from the adsbdb flightroute lookup. */
+export interface Airport {
+  icao?: string | null;
+  iata?: string | null;
+  name?: string | null;
+  municipality?: string | null;
+  country?: string | null;
+  lat?: number | null;
+  lon?: number | null;
 }
 export interface VesselEnrichment {
   kind: 'vessel';

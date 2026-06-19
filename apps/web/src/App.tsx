@@ -25,6 +25,10 @@ import { AlertSubscriber } from './alerts/AlertSubscriber.js';
 import { AlertsPanel } from './alerts/AlertsPanel.js';
 import { AlertsRailList } from './alerts/AlertsRailList.js';
 import { ErrorBoundary } from './shell/ErrorBoundary.js';
+import { Link } from 'react-router-dom';
+import { useAuth } from './auth/AuthContext.js';
+import { isSupabaseConfigured } from './transport/supabase.js';
+import { resetToTopDown } from './globe/camera.js';
 
 export function App(): JSX.Element {
   const registry = useMemo(() => {
@@ -115,6 +119,8 @@ export function App(): JSX.Element {
                   block globe interaction. */}
               <GlobeTheater viewer={viewer} />
               <GlobeOverlays viewer={viewer} />
+              <GlobeControls viewer={viewer} />
+              <AuthNotice />
               <AgentConsole viewer={viewer} />
             </>
           ) : (
@@ -127,6 +133,53 @@ export function App(): JSX.Element {
       />
       <AlertsPanel open={alertsOpen} onClose={() => setAlertsOpen(false)} viewer={viewer} />
     </>
+  );
+}
+
+// Floating globe controls. A reset-to-top-down button (removes camera tilt /
+// "side view" without losing the analyst's location) — the most-requested
+// orientation control.
+function GlobeControls({ viewer }: { viewer: Cesium.Viewer | null }): JSX.Element | null {
+  if (!viewer) return null;
+  return (
+    <div className="absolute bottom-3 right-3 z-[1200] flex flex-col gap-1.5">
+      <button
+        type="button"
+        title="Reset to top-down (nadir) view"
+        onClick={() => resetToTopDown(viewer)}
+        className="mono text-[10px] px-2 py-1 border border-line rounded-sm bg-bg-1/90 text-txt-1 hover:border-accent-line hover:text-accent"
+      >
+        ⊕ Top-down
+      </button>
+    </div>
+  );
+}
+
+// Prominent "you're not signed in" notice. On the hosted backend every data
+// endpoint is auth-gated, so a logged-out visitor sees an empty globe and
+// assumes it's broken. This makes the real reason explicit with a one-click
+// path to sign in. Only shows when auth is configured AND the first session
+// check has resolved to "no user".
+function AuthNotice(): JSX.Element | null {
+  const { user, loading } = useAuth();
+  if (loading || user || !isSupabaseConfigured) return null;
+  return (
+    <div className="absolute inset-x-0 top-10 z-[1500] flex justify-center px-3 pointer-events-none">
+      <div className="pointer-events-auto bg-bg-1/95 border border-accent-line rounded-md px-4 py-3 shadow-xl max-w-sm text-center">
+        <p className="text-txt-0 text-[13px] font-semibold">Sign in to load live data</p>
+        <p className="text-txt-2 text-[11px] mt-1 leading-snug">
+          Live aircraft, vessels &amp; intel need an account — the globe stays blank until you sign
+          in.
+        </p>
+        <Link
+          to="/login"
+          className="inline-block mt-2.5 px-3 py-1 rounded-sm text-[12px] font-medium"
+          style={{ background: 'var(--accent)', color: '#06121a' }}
+        >
+          Sign in →
+        </Link>
+      </div>
+    </div>
   );
 }
 

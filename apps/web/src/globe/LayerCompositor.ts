@@ -30,29 +30,68 @@ function viewportQuery(
 ): () => string | null {
   return () => {
     const rect = viewer.camera.computeViewRectangle();
-    if (!rect) return `limit=${worldLimit}`;
-    const s = Cesium.Math.toDegrees(rect.south);
-    const n = Cesium.Math.toDegrees(rect.north);
-    const w = Cesium.Math.toDegrees(rect.west);
-    const e = Cesium.Math.toDegrees(rect.east);
-    const widthDeg = ((e - w) % 360 + 360) % 360;
-    // ~world view: there's no bbox to scope by, and 14k individual dots are
-    // visually indistinguishable at this zoom, so cap to worldLimit to keep the
-    // entity-update loop cheap. Zooming in drops below the threshold and loads
-    // the FULL local traffic (up to `limit`) for the viewport — so China/Russia
-    // etc. show everything when you actually look at them.
-    if (widthDeg > 170 || n - s > 140) return `limit=${worldLimit}`;
-    // Pad ~15% so contacts just outside the frame are loaded before they
-    // scroll in; clamp to the backend's accepted ranges.
-    const padLat = (n - s) * 0.15;
-    const padLon = widthDeg * 0.15;
-    const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
-    const S = clamp(s - padLat, -90, 90).toFixed(3);
-    const N = clamp(n + padLat, -90, 90).toFixed(3);
-    const W = clamp(w - padLon, -180, 180).toFixed(3);
-    const E = clamp(e + padLon, -180, 180).toFixed(3);
-    return `lamin=${S}&lomin=${W}&lamax=${N}&lomax=${E}&limit=${limit}`;
+    if (rect) {
+      const s = Cesium.Math.toDegrees(rect.south);
+      const n = Cesium.Math.toDegrees(rect.north);
+      const w = Cesium.Math.toDegrees(rect.west);
+      const e = Cesium.Math.toDegrees(rect.east);
+      const widthDeg = ((e - w) % 360 + 360) % 360;
+      // ~world view: there's no bbox to scope by, and 14k individual dots are
+      // visually indistinguishable at this zoom, so cap to worldLimit to keep the
+      // entity-update loop cheap. Zooming in drops below the threshold and loads
+      // the FULL local traffic (up to `limit`) for the viewport — so China/Russia
+      // etc. show everything when you actually look at them.
+      if (widthDeg > 170 || n - s > 140) return `limit=${worldLimit}`;
+      // Pad ~15% so contacts just outside the frame are loaded before they
+      // scroll in; clamp to the backend's accepted ranges.
+      const padLat = (n - s) * 0.15;
+      const padLon = widthDeg * 0.15;
+      const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
+      const S = clamp(s - padLat, -90, 90).toFixed(3);
+      const N = clamp(n + padLat, -90, 90).toFixed(3);
+      const W = clamp(w - padLon, -180, 180).toFixed(3);
+      const E = clamp(e + padLon, -180, 180).toFixed(3);
+      return `lamin=${S}&lomin=${W}&lamax=${N}&lomax=${E}&limit=${limit}`;
+    }
+    // computeViewRectangle() returns undefined when the globe doesn't cleanly
+    // fill the frame — a TILTED / oblique view with the horizon or sky visible,
+    // the common case the moment you zoom in and pitch the camera. Falling back
+    // to the global `limit=worldLimit` subset then served the sparse ~4000
+    // worldwide sample over your local area → "zoom in and planes don't load".
+    // Derive a LOCAL bbox from the globe point under the screen centre + the
+    // camera height instead, so a zoomed-in oblique view always loads its own
+    // traffic. Only when the screen centre misses the globe (pointed at space)
+    // do we keep the world fallback.
+    return cameraCenterBbox(viewer, limit) ?? `limit=${worldLimit}`;
   };
+}
+
+// Local bbox centred on the globe point under the screen centre, sized from the
+// camera height. Used when computeViewRectangle() can't return a rectangle.
+function cameraCenterBbox(viewer: Cesium.Viewer, limit: number): string | null {
+  const scene = viewer.scene;
+  const canvas = scene.canvas;
+  const cw = canvas.clientWidth || canvas.width;
+  const ch = canvas.clientHeight || canvas.height;
+  if (!cw || !ch) return null;
+  const ray = viewer.camera.getPickRay(new Cesium.Cartesian2(cw / 2, ch / 2));
+  if (!ray) return null;
+  const hit = scene.globe.pick(ray, scene);
+  if (!hit) return null; // screen centre is on the sky → keep the world fallback
+  const carto = Cesium.Cartographic.fromCartesian(hit);
+  const lat = Cesium.Math.toDegrees(carto.latitude);
+  const lon = Cesium.Math.toDegrees(carto.longitude);
+  const height = viewer.camera.positionCartographic?.height ?? 500_000;
+  // Half-span (deg) from camera height. A tilted view sees far ahead of the
+  // ground point, so be generous; clamp so we never effectively go global.
+  const spanDeg = Math.min(40, Math.max(0.5, height / 60_000));
+  const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
+  const padLon = spanDeg / Math.max(0.25, Math.cos((lat * Math.PI) / 180));
+  const S = clamp(lat - spanDeg, -90, 90).toFixed(3);
+  const N = clamp(lat + spanDeg, -90, 90).toFixed(3);
+  const W = clamp(lon - padLon, -180, 180).toFixed(3);
+  const E = clamp(lon + padLon, -180, 180).toFixed(3);
+  return `lamin=${S}&lomin=${W}&lamax=${N}&lomax=${E}&limit=${limit}`;
 }
 
 // Bridges LayerRegistry → Cesium. One adapter per enabled layer.

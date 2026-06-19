@@ -39,6 +39,35 @@ export function flyToGlobal(viewer: Cesium.Viewer, durationSec = 1.0): void {
   });
 }
 
+// Reset to a STRAIGHT-DOWN (nadir) view over wherever the camera is currently
+// looking, keeping the current eye altitude + north-up. Removes the tilt ("side
+// view") and any heading rotation without throwing away the analyst's location
+// or zoom — the "reset globe view, top-down not side" control.
+export function resetToTopDown(viewer: Cesium.Viewer, durationSec = 0.7): void {
+  const scene = viewer.scene;
+  const canvas = scene.canvas;
+  const cx = (canvas.clientWidth || canvas.width) / 2;
+  const cy = (canvas.clientHeight || canvas.height) / 2;
+  const ray = viewer.camera.getPickRay(new Cesium.Cartesian2(cx, cy));
+  const hit = ray ? scene.globe.pick(ray, scene) : undefined;
+  const carto = viewer.camera.positionCartographic;
+  const height = carto?.height ?? 20_000_000;
+  let lon = carto ? Cesium.Math.toDegrees(carto.longitude) : 20;
+  let lat = carto ? Cesium.Math.toDegrees(carto.latitude) : 35;
+  if (hit) {
+    // Centre on the point under the screen centre (what the analyst is looking
+    // at when tilted), not the camera nadir.
+    const c = Cesium.Cartographic.fromCartesian(hit);
+    lon = Cesium.Math.toDegrees(c.longitude);
+    lat = Cesium.Math.toDegrees(c.latitude);
+  }
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+    duration: durationSec,
+    orientation: { heading: 0, pitch: -Cesium.Math.PI_OVER_TWO, roll: 0 },
+  });
+}
+
 // Find an entity by id across all data sources + the root collection.
 function findEntity(viewer: Cesium.Viewer, entityId: string): Cesium.Entity | null {
   for (let i = 0; i < viewer.dataSources.length; i++) {

@@ -14,9 +14,12 @@ appropriate upstream:
 
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 from typing import Any
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -301,30 +304,102 @@ async def _enrich_aircraft(icao24: str, callsign: str | None = None) -> dict[str
             "source": "hexdb.io",
         }
 
-    base = await cache.get_or_fetch(key, 24 * 3600.0, load)
+    # Fetch the three independent upstreams CONCURRENTLY (was sequential, which
+    # stacked ~3 round-trips and made the panel feel slow to populate):
+    #  - Hexdb registry (per-airframe, 24h cache),
+    #  - Planespotters photo (12h cache),
+    #  - adsbdb flight route (per-callsign, 1h cache).
+    base, photo, route = await asyncio.gather(
+        cache.get_or_fetch(key, 24 * 3600.0, load),
+        _planespotters_photo(icao24),
+        _aircraft_route(callsign),
+    )
 
-    # Layer a Planespotters photo on top (separately cached, 12h) so the user
-    # gets a visual reference for what the aircraft looks like.
-    photo = await _planespotters_photo(icao24)
-
-    # Layer the callsign-derived airline ID on top — never cached with the
-    # Hexdb response because callsign varies per flight.
+    # The callsign → airline prefix lookup is a local table read (no I/O).
     airline = _airline_from_callsign(callsign)
-    if airline is not None or photo is not None:
-        out = dict(base)
-        if airline is not None:
-            icao_prefix, op_name, iata = airline
-            out["operator_callsign"] = icao_prefix
-            out["operator_iata"] = iata
-            # Only override Hexdb operator if it was blank / missing.
-            if not out.get("operator"):
-                out["operator"] = op_name
-        if photo is not None:
-            for k, v in photo.items():
-                if v is not None and v != "":
-                    out[k] = v
-        return out
-    return base
+
+    out = dict(base)
+    if airline is not None:
+        icao_prefix, op_name, iata = airline
+        out["operator_callsign"] = icao_prefix
+        out["operator_iata"] = iata
+        # Only override Hexdb operator if it was blank / missing.
+        if not out.get("operator"):
+            out["operator"] = op_name
+    if photo is not None:
+        for k, v in photo.items():
+            if v is not None and v != "":
+                out[k] = v
+    if route:
+        for k in ("origin", "destination", "route_airline"):
+            if route.get(k):
+                out[k] = route[k]
+    return out
+
+
+async def _aircraft_route(callsign: str | None) -> dict[str, Any] | None:
+    """Departure + destination airports for a live callsign via adsbdb.com — a
+    free, no-auth API that maps a callsign to its scheduled flightroute (origin /
+    destination airport name, ICAO + IATA codes, country, lat/lon). The frontend
+    uses the destination lat/lon + the aircraft's live groundspeed to compute a
+    distance-to-go and ETA.
+
+    Cached per callsign — a flight-number's route is stable for the day, and a 1h
+    TTL keeps us off adsbdb's rate limit. Empty result (private flights, GA,
+    fresh/unknown callsigns) is cached too so we don't re-hit on every reselect.
+    """
+    if not callsign:
+        return None
+    cs = re.sub(r"[^A-Z0-9]", "", callsign.strip().upper())
+    if len(cs) < 3:
+        return None
+    key = f"route:{cs}"
+
+    async def load() -> dict[str, Any]:
+        try:
+            r = await get_client().get(
+                f"https://api.adsbdb.com/v0/callsign/{cs}",
+                timeout=httpx.Timeout(6.0, connect=3.0),
+            )
+        except Exception:  # noqa: BLE001 — adsbdb down/slow → no route, not fatal
+            return {}
+        if r.status_code != 200:
+            return {}
+        try:
+            fr = ((r.json() or {}).get("response") or {}).get("flightroute")
+        except Exception:  # noqa: BLE001 — non-JSON body
+            return {}
+        if not isinstance(fr, dict):
+            return {}
+
+        def _airport(a: Any) -> dict[str, Any] | None:
+            if not isinstance(a, dict):
+                return None
+            ap = {
+                "icao": a.get("icao_code"),
+                "iata": a.get("iata_code"),
+                "name": a.get("name"),
+                "municipality": a.get("municipality"),
+                "country": a.get("country_iso_name"),
+                "lat": a.get("latitude"),
+                "lon": a.get("longitude"),
+            }
+            return ap if (ap["icao"] or ap["name"]) else None
+
+        res: dict[str, Any] = {}
+        origin = _airport(fr.get("origin"))
+        dest = _airport(fr.get("destination"))
+        if origin:
+            res["origin"] = origin
+        if dest:
+            res["destination"] = dest
+        airline = fr.get("airline")
+        if isinstance(airline, dict) and airline.get("name"):
+            res["route_airline"] = airline["name"]
+        return res
+
+    res = await cache.get_or_fetch(key, 3600.0, load)
+    return res or None
 
 
 # ── vessels ──────────────────────────────────────────────────────────────
