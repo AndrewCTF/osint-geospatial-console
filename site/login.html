@@ -42,7 +42,8 @@
       <button id="signin">Sign in</button>
       <button id="signup" class="ghost">Create account · 14-day trial</button>
       <p class="note" id="note"></p>
-      <p class="foot">← <a href="/">back to velocity</a></p>
+      <p class="foot"><a href="#" id="forgot">Forgot password?</a></p>
+      <p class="foot" style="margin-top:10px">← <a href="/">back to velocity</a></p>
     </div>
     <script>
       let CFG = null;
@@ -71,8 +72,25 @@
           note(d.error_description || d.msg || d.error || "Sign-in failed.");
         } catch (e) { note("Network error."); }
       }
+      async function recover() {
+        if (!CFG?.configured) return note("Backend not configured yet.");
+        const email = document.getElementById("email").value.trim();
+        if (!email) return note("Enter your email above first.");
+        note("…", false);
+        const redirect = encodeURIComponent(location.origin + "/app/reset");
+        try {
+          const r = await fetch(`${CFG.supabaseUrl}/auth/v1/recover?redirect_to=${redirect}`, {
+            method: "POST",
+            headers: { apikey: CFG.supabaseAnonKey, "content-type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+          if (r.ok) note("If that email has an account, a reset link is on its way.", false);
+          else { const d = await r.json().catch(() => ({})); note(d.msg || d.error_description || "Could not send reset email."); }
+        } catch (e) { note("Network error."); }
+      }
       document.getElementById("signin").onclick = () => auth("signin");
       document.getElementById("signup").onclick = () => auth("signup");
+      document.getElementById("forgot").onclick = (e) => { e.preventDefault(); recover(); };
       document.getElementById("password").addEventListener("keydown", (e) => { if (e.key === "Enter") auth("signin"); });
     </script>
   </body>

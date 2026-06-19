@@ -399,12 +399,20 @@ export default {
     }
 
     // ---------- console SPA (apps/web) under /app ----------
-    // Static files (/app/assets/*, /app/cesium/*) serve directly; client-side
-    // routes (/app, /app/2d, …) fall back to the SPA shell.
+    // Real static files have an extension (/app/assets/index-*.js, /app/cesium/*,
+    // /app/favicon.svg) → serve directly. Everything else under /app is a
+    // client-side route (/app, /app/2d, /app/login, /app/reset, /app/forgot) →
+    // serve the SPA shell so the React router can handle it. We must NOT defer to
+    // ASSETS for routes: ASSETS answers an unknown clean URL with a 307 redirect
+    // (not a 404), which would bounce a deep-linked route (e.g. a password-reset
+    // email landing on /app/reset) before the app ever loads.
     if (path === "/app" || path.startsWith("/app/")) {
-      const res = await env.ASSETS.fetch(request);
-      if (res.status !== 404) return res;
-      return env.ASSETS.fetch(new Request(new URL("/app/index.html", request.url), request));
+      const last = path.split("/").pop() || "";
+      if (last.includes(".")) return env.ASSETS.fetch(request);
+      // Fetch the directory form "/app/" (not "/app/index.html"): with the
+      // default html_handling, asking for index.html itself 307-redirects to the
+      // directory, whereas "/app/" serves the shell at 200.
+      return env.ASSETS.fetch(new Request(new URL("/app/", request.url), request));
     }
 
     // ---------- everything else → static marketing site ----------
