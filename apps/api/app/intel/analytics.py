@@ -15,6 +15,8 @@ Sources, all already warm in-process (no new steady-state upstream load):
 
 from __future__ import annotations
 
+import datetime as dt
+import math
 import time
 from collections import Counter
 from typing import Any
@@ -386,12 +388,56 @@ async def lookup_aircraft(ident: str) -> dict[str, Any]:
         assessment = "GNSS degraded — possible jamming/spoofing footprint"
     if c and c["category"] == "emergency":
         assessment = f"EMERGENCY squawk {c['squawk']}"
+
+    # Flight route (departure + destination airport) + a live ETA, so the AI can
+    # answer "where did it depart / when does it land / how long to run". adsbdb
+    # maps the callsign to a scheduled route; ETA is distance-to-destination
+    # divided by the current groundspeed.
+    now = dt.datetime.now(dt.UTC)
+    route_info: dict[str, Any] | None = None
+    cs = (p.get("callsign") or "").strip()
+    if cs:
+        from app.routes.entity import _aircraft_route  # noqa: PLC0415 — avoid import cycle
+
+        route = await _aircraft_route(cs)
+        if route:
+            route_info = dict(route)
+            dest = route.get("destination") or {}
+            coords = (hit.get("geometry") or {}).get("coordinates")
+            vel = p.get("velocity_ms")
+            if (
+                isinstance(coords, list)
+                and len(coords) >= 2
+                and isinstance(dest.get("lat"), (int, float))
+                and isinstance(dest.get("lon"), (int, float))
+                and isinstance(vel, (int, float))
+                and vel > 30
+            ):
+                lon, lat = float(coords[0]), float(coords[1])
+                dlat = math.radians(dest["lat"] - lat)
+                dlon = math.radians(dest["lon"] - lon)
+                aa = (
+                    math.sin(dlat / 2) ** 2
+                    + math.cos(math.radians(lat))
+                    * math.cos(math.radians(dest["lat"]))
+                    * math.sin(dlon / 2) ** 2
+                )
+                dist_km = 2 * 6371 * math.asin(math.sqrt(aa))
+                eta_min = dist_km * 1000 / vel / 60
+                route_info["distance_to_go_km"] = round(dist_km)
+                route_info["eta_minutes"] = round(eta_min)
+                route_info["eta_utc"] = (now + dt.timedelta(minutes=eta_min)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+
     return {
         "found": True,
         "aircraft": c,
         "registration": p.get("registration"),
         "source": p.get("source"),
         "assessment": assessment,
+        "route": route_info,
+        "time_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "server_track_point": (
             {"lon": obs.lon, "lat": obs.lat, "t": int(obs.t)} if obs else None
         ),

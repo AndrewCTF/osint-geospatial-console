@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import * as Cesium from 'cesium';
 import { useSelection, useAlerts } from '../state/stores.js';
 import { tracks } from '../intel/tracks.js';
-import { fetchEnrichment, type Enrichment } from '../transport/entity.js';
+import { fetchEnrichment, type Enrichment, type Airport } from '../transport/entity.js';
 import { flyToPosition, followEntity, stopFollow } from '../globe/camera.js';
 import { Sparkline } from './Sparkline.js';
 import { CameraCard } from './CameraCard.js';
@@ -120,6 +120,8 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
       <Header snap={snap} id={id} enrichment={enrichment} />
 
       {snap && <StatsCard snap={snap} />}
+
+      {snap && <FlightCard enrichment={enrichment} snap={snap} />}
 
       {snap?.position && viewer && (
         <div className="flex flex-wrap gap-2">
@@ -320,6 +322,90 @@ function StatsCard({ snap }: { snap: PanelSnapshot }): JSX.Element | null {
   }
   if (rows.length === 0) return null;
   return <KV>{rows}</KV>;
+}
+
+// Great-circle distance in km (haversine) — for distance-to-go to destination.
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function airportLabel(a: Airport | null): string {
+  if (!a) return '—';
+  const code = a.iata || a.icao || '';
+  const place = a.municipality || a.name || '';
+  const label = [code, place].filter(Boolean).join(' · ');
+  return label || a.name || '—';
+}
+
+// Live flight summary for the selected aircraft: route (departure → destination
+// airport from the adsbdb callsign lookup), plus a distance-to-go + ETA computed
+// from the aircraft's LIVE position and groundspeed toward the destination, and
+// the current UTC time. Renders nothing for aircraft with no known route
+// (private / GA / unknown callsign) so it never shows an empty shell.
+function FlightCard({
+  enrichment,
+  snap,
+}: {
+  enrichment: Enrichment | null;
+  snap: PanelSnapshot;
+}): JSX.Element | null {
+  if (!enrichment || enrichment.kind !== 'aircraft') return null;
+  const e = enrichment as {
+    origin?: Airport | null;
+    destination?: Airport | null;
+    route_airline?: string | null;
+  };
+  const origin = e.origin ?? null;
+  const dest = e.destination ?? null;
+  if (!origin && !dest) return null;
+
+  const pos = snap.position;
+  const gs =
+    typeof snap.properties['velocity_ms'] === 'number'
+      ? (snap.properties['velocity_ms'] as number)
+      : null;
+
+  let distKm: number | null = null;
+  let goMin: number | null = null;
+  if (pos && dest?.lat != null && dest?.lon != null) {
+    distKm = haversineKm(pos.lat, pos.lon, dest.lat, dest.lon);
+    // Only ETA when airborne at a real groundspeed (skip taxiing / 0 m/s).
+    if (gs != null && gs > 30) goMin = (distKm * 1000) / gs / 60;
+  }
+  const nowZ = `${new Date().toISOString().slice(11, 16)}Z`;
+  const etaZ =
+    goMin != null ? `${new Date(Date.now() + goMin * 60_000).toISOString().slice(11, 16)}Z` : null;
+  const goLabel =
+    goMin != null
+      ? goMin >= 60
+        ? `${Math.floor(goMin / 60)}h ${Math.round(goMin % 60)}m`
+        : `${Math.round(goMin)}m`
+      : null;
+
+  const rows: JSX.Element[] = [];
+  rows.push(<KVRow key="from" k="Departed" v={airportLabel(origin)} />);
+  rows.push(<KVRow key="to" k="Arriving" v={airportLabel(dest)} />);
+  if (e.route_airline) rows.push(<KVRow key="al" k="Airline" v={e.route_airline} />);
+  if (distKm != null)
+    rows.push(<KVRow key="dist" k="Dist to go" v={`${Math.round(distKm).toLocaleString()} km`} />);
+  if (etaZ) rows.push(<KVRow key="eta" k="ETA" v={etaZ} />);
+  if (goLabel) rows.push(<KVRow key="go" k="Time to run" v={goLabel} />);
+  rows.push(<KVRow key="now" k="Time now" v={nowZ} />);
+
+  const head =
+    origin?.iata || dest?.iata ? `${origin?.iata ?? '???'} → ${dest?.iata ?? '???'}` : undefined;
+  return (
+    <section>
+      <SectionLabel title="Flight" {...(head ? { count: head } : {})} />
+      <KV className="mt-1.5">{rows}</KV>
+    </section>
+  );
 }
 
 function TrackCard({
