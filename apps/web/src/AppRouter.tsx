@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-do
 import { App } from './App.js';
 import { App2D } from './App2D.js';
 import { AuthProvider, useAuth } from './auth/AuthContext.js';
+import { AuthForm } from './auth/AuthForm.js';
 import { LoginPage } from './auth/LoginPage.js';
 import { SignupPage } from './auth/SignupPage.js';
 import { SettingsModal } from './settings/SettingsModal.js';
@@ -21,6 +22,8 @@ export function AppRouter(): JSX.Element {
           <Route path="/2d" element={<App2D />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
+          <Route path="/forgot" element={<AuthForm mode="forgot" />} />
+          <Route path="/reset" element={<AuthForm mode="reset" />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>
@@ -32,7 +35,7 @@ function TopBar(): JSX.Element | null {
   const { user } = useAuth();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The auth pages are full-screen cards — no overlay chrome on them.
-  if (loc.pathname === '/login' || loc.pathname === '/signup') return null;
+  if (['/login', '/signup', '/forgot', '/reset'].includes(loc.pathname)) return null;
   const is2D = loc.pathname.startsWith('/2d');
   return (
     <div className="absolute top-1 right-2 z-[1000] flex items-center gap-2">

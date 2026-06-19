@@ -5,7 +5,15 @@
   "main": "worker.js",
   "compatibility_date": "2025-06-01",
   "compatibility_flags": ["nodejs_compat"],
-  "assets": { "directory": ".", "binding": "ASSETS" },
+  // run_worker_first: the Worker handles SPA routes under /app (so a deep link
+  // like /app/reset serves the app shell instead of the asset layer's clean-URL
+  // 307). The heavy static dirs stay asset-first for speed; worker.js routes any
+  // /app/* with a file extension back to the ASSETS binding anyway.
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": ["/app/*", "!/app/assets/*", "!/app/cesium/*"]
+  },
 
   // The gateway Worker proxies /api/* (minus its own auth/billing routes),
   // /tiles/* and /ws/* to the FastAPI backend (apps/api) at BACKEND_URL,

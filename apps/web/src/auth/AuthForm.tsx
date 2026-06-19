@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../transport/supabase.js';
 
-type Mode = 'login' | 'signup';
+type Mode = 'login' | 'signup' | 'forgot' | 'reset';
 
 const COPY: Record<Mode, { title: string; cta: string; alt: string; altTo: string; altLabel: string }> = {
   login: {
@@ -21,7 +21,28 @@ const COPY: Record<Mode, { title: string; cta: string; alt: string; altTo: strin
     altTo: '/login',
     altLabel: 'Sign in',
   },
+  forgot: {
+    title: 'Reset password',
+    cta: 'Send reset link',
+    alt: 'Remembered it?',
+    altTo: '/login',
+    altLabel: 'Sign in',
+  },
+  reset: {
+    title: 'Set a new password',
+    cta: 'Update password',
+    alt: 'Back to',
+    altTo: '/login',
+    altLabel: 'Sign in',
+  },
 };
+
+// Live origin + Vite base ("/app/" in prod) → the URL Supabase emails point at.
+// Must also be in the project's Auth → Redirect URLs allow-list.
+function appUrl(path = ''): string {
+  const base = import.meta.env.BASE_URL || '/';
+  return `${window.location.origin}${base.endsWith('/') ? base : base + '/'}${path}`;
+}
 
 export function AuthForm({ mode }: { mode: Mode }): JSX.Element {
   const nav = useNavigate();
@@ -43,17 +64,12 @@ export function AuthForm({ mode }: { mode: Mode }): JSX.Element {
     setBusy(true);
     try {
       if (mode === 'signup') {
-        // Where the email-confirmation link sends the user back to. Derived from
-        // the live origin + Vite base ("/app/" in prod) so it's correct in every
-        // environment — without this, Supabase falls back to its Auth "Site URL"
-        // (defaults to http://localhost:3000). This URL must also be in the
-        // project's Auth → Redirect URLs allow-list.
-        const base = import.meta.env.BASE_URL || '/';
-        const emailRedirectTo = `${window.location.origin}${base.endsWith('/') ? base : base + '/'}`;
+        // emailRedirectTo: where the confirmation link returns. Without it
+        // Supabase falls back to its Auth "Site URL" (defaults to localhost:3000).
         const { data, error: err } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo },
+          options: { emailRedirectTo: appUrl() },
         });
         if (err) throw err;
         // When email confirmation is ON (hosted default), signUp returns a
@@ -64,6 +80,21 @@ export function AuthForm({ mode }: { mode: Mode }): JSX.Element {
         } else {
           setNotice('Account created. Check your email to confirm, then sign in.');
         }
+      } else if (mode === 'forgot') {
+        // Sends a recovery email; the link lands on /reset with a recovery
+        // session in the URL (detectSessionInUrl picks it up), where the user
+        // sets a new password.
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: appUrl('reset'),
+        });
+        if (err) throw err;
+        setNotice('If that email has an account, a reset link is on its way.');
+      } else if (mode === 'reset') {
+        // The recovery session is already established from the email link.
+        const { error: err } = await supabase.auth.updateUser({ password });
+        if (err) throw err;
+        setNotice('Password updated. Signing you in…');
+        nav('/', { replace: true });
       } else {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
         if (err) throw err;
@@ -85,32 +116,47 @@ export function AuthForm({ mode }: { mode: Mode }): JSX.Element {
         <div className="mb-1 font-mono text-base text-txt-0">{copy.title}</div>
         <div className="micro mb-5">Velocity</div>
 
-        <label className="micro mb-1 block" htmlFor="email">
-          Email
-        </label>
-        <input
-          id="email"
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="mb-4 w-full rounded-sm border border-line bg-bg-2 px-2 py-1.5 font-mono text-xs text-txt-0 outline-none focus:border-accent-line"
-        />
+        {mode !== 'reset' && (
+          <>
+            <label className="micro mb-1 block" htmlFor="email">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mb-4 w-full rounded-sm border border-line bg-bg-2 px-2 py-1.5 font-mono text-xs text-txt-0 outline-none focus:border-accent-line"
+            />
+          </>
+        )}
 
-        <label className="micro mb-1 block" htmlFor="password">
-          Password
-        </label>
-        <input
-          id="password"
-          type="password"
-          autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-          required
-          minLength={6}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="mb-5 w-full rounded-sm border border-line bg-bg-2 px-2 py-1.5 font-mono text-xs text-txt-0 outline-none focus:border-accent-line"
-        />
+        {mode !== 'forgot' && (
+          <>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="micro" htmlFor="password">
+                {mode === 'reset' ? 'New password' : 'Password'}
+              </label>
+              {mode === 'login' && (
+                <Link to="/forgot" className="micro text-accent hover:underline">
+                  Forgot?
+                </Link>
+              )}
+            </div>
+            <input
+              id="password"
+              type="password"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              required
+              minLength={6}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="mb-5 w-full rounded-sm border border-line bg-bg-2 px-2 py-1.5 font-mono text-xs text-txt-0 outline-none focus:border-accent-line"
+            />
+          </>
+        )}
 
         {error && (
           <div className="mb-4 rounded-sm border border-alert bg-alert-bg px-2 py-1.5 font-mono text-[11px] text-alert">
