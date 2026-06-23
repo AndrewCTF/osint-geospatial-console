@@ -21,6 +21,7 @@ from app.routes import adsb as adsb_routes
 from app.routes import ais as ais_routes
 from app.routes import alert_rules as alert_rules_routes
 from app.routes import alerts as alerts_routes
+from app.routes import audit as audit_routes
 from app.routes import aviation as aviation_routes
 from app.routes import cables as cables_routes
 from app.routes import cams as cams_routes
@@ -30,6 +31,7 @@ from app.routes import cyber as cyber_routes
 from app.routes import entity as entity_routes
 from app.routes import eq as eq_routes
 from app.routes import events as events_routes
+from app.routes import extract as extract_routes
 from app.routes import export as export_routes
 from app.routes import firms as firms_routes
 from app.routes import geocode as geocode_routes
@@ -43,10 +45,12 @@ from app.routes import maps as maps_routes
 from app.routes import maritime as maritime_routes
 from app.routes import news as news_routes_mod
 from app.routes import ontology as ontology_routes
+from app.routes import recon as recon_routes
 from app.routes import sar as sar_routes
 from app.routes import search as search_routes
 from app.routes import seismic as seismic_routes
 from app.routes import simulation as simulation_routes
+from app.routes import situations as situations_routes
 from app.routes import space as space_routes
 from app.routes import status as status_routes
 from app.routes import targets as targets_routes
@@ -125,6 +129,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # a local import would shadow it and UnboundLocalError the
                 # shutdown call below on the no-background (test) path.
                 ais_routes._ensure_upstream(settings.aisstream_key)
+            # MarineTraffic (PAID global AIS) — dormant unless MARINETRAFFIC_KEY is
+            # set; start() no-ops without a key, so this is free when unconfigured.
+            from app import marinetraffic  # noqa: PLC0415
+
+            marinetraffic.start()
             # Position history store for 3D replay/scrub.
             from app import history  # noqa: PLC0415
 
@@ -194,6 +203,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 ais_firehose,  # noqa: PLC0415
                 ais_keyless,  # noqa: PLC0415
                 history,  # noqa: PLC0415
+                marinetraffic,  # noqa: PLC0415
             )
             from app.routes import news as news_routes  # noqa: PLC0415
 
@@ -201,6 +211,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             await ais_firehose.stop()
             await ais_keyless.stop()
+            await marinetraffic.stop()
             await maritime_routes.stop_background_poll()
             await history.stop()
             await watch_eval.stop()
@@ -261,6 +272,9 @@ def create_app() -> FastAPI:
     app.include_router(alert_rules_routes.router)
     app.include_router(targets_routes.router)
     app.include_router(status_routes.router)
+    # Local 3DGS reconstruction jobs (Studio): images/video → COLMAP → gsplat →
+    # .ply, on the box's GPU. SSE progress; keyless local passes through.
+    app.include_router(recon_routes.router)
     app.include_router(simulation_routes.router)
     # Typed ontology spine (read) + governed write-back actions — the semantic
     # layer the kanban, alerts, and agent compose on (Track A1/C1).
@@ -269,6 +283,11 @@ def create_app() -> FastAPI:
     # Shared named COP (save/load a viewport+layers+filters picture as a map:
     # ontology object) + the /ws/cop follow-along delta channel (Track D2).
     app.include_router(maps_routes.router)
+    # Gotham-style Situation aggregate (situation: ontology object + contains
+    # links) + grounded-LLM Courses of Action.
+    app.include_router(situations_routes.router)
+    app.include_router(audit_routes.router)
+    app.include_router(extract_routes.router)
 
     # TiTiler COG sub-app (Track B2): XYZ tiles for any Cloud-Optimized GeoTIFF
     # (Maxar Open Data S3, future SAR delivery), so B3/B4/B5 have a universal
@@ -295,6 +314,30 @@ def create_app() -> FastAPI:
     mcp_routes, mcp_manager = build_mcp_mount()
     app.state.mcp_manager = mcp_manager
     app.router.routes.extend(mcp_routes)
+
+    # Serve the built frontend (apps/web/dist) at / so a LOCAL desktop window can
+    # load the WHOLE app same-origin from this backend — /api, /tiles, /ws then
+    # "just work" with no proxy and no per-file API-base rewrite. Mounted LAST so
+    # every API/route above wins; only unmatched paths fall through to the SPA.
+    # Keyless local runs pass ApiKeyMiddleware, so the static assets serve fine.
+    from pathlib import Path as _Path  # noqa: PLC0415
+    from fastapi.staticfiles import StaticFiles  # noqa: PLC0415
+    from starlette.exceptions import HTTPException as _StarletteHTTPException  # noqa: PLC0415
+
+    class _SPAStaticFiles(StaticFiles):
+        # SPA fallback: client-side routes (/2d, /studio, …) have no matching file,
+        # so a 404 falls back to index.html and React Router takes over.
+        async def get_response(self, path: str, scope):  # type: ignore[no-untyped-def]
+            try:
+                return await super().get_response(path, scope)
+            except _StarletteHTTPException as exc:
+                if exc.status_code == 404:
+                    return await super().get_response("index.html", scope)
+                raise
+
+    _dist = _Path(__file__).resolve().parents[2] / "web" / "dist"
+    if _dist.is_dir():
+        app.mount("/", _SPAStaticFiles(directory=str(_dist), html=True), name="web")
 
     return app
 
