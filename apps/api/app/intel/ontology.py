@@ -57,6 +57,8 @@ KNOWN_RELS: frozenset[str] = frozenset(
         "operates",  # operator → aircraft/vessel
         "correlated",  # cross-domain co-location (from the correlations index)
         "member_of",  # sim drone → swarm
+        "contains",  # situation → child incident/entity/COA it aggregates
+        "part_of",  # inverse of contains (child → situation)
     )
 )
 
@@ -88,6 +90,12 @@ class Object(BaseModel):
     kind: ObjectKind = "object"
     props: dict[str, Any] = Field(default_factory=dict)
     created_at: str | None = None
+    # Gotham-substrate ACL: classification ladder (0..4), positive compartments
+    # the reader must hold, and whether this row is shared beyond its owner. The
+    # DB RLS policies gate visibility on these columns (see the substrate migration).
+    classification: int = 0
+    compartments: list[str] = Field(default_factory=list)
+    shared: bool = False
 
     def normalised(self) -> Object:
         """Return a copy with ``kind`` reconciled to the id prefix."""
@@ -109,6 +117,10 @@ class Link(BaseModel):
     props: dict[str, Any] = Field(default_factory=dict)
     id: str | None = None
     created_at: str | None = None
+    # ACL columns — same semantics as Object (see the substrate migration).
+    classification: int = 0
+    compartments: list[str] = Field(default_factory=list)
+    shared: bool = False
 
 
 class Action(BaseModel):
@@ -201,6 +213,9 @@ class OntologyRegistry:
             "user_id": self.ctx.user_id,
             "kind": obj.kind,
             "props": obj.props,
+            "classification": int(obj.classification),
+            "compartments": obj.compartments,
+            "shared": obj.shared,
         }
         headers = {
             **_headers(self.ctx, self.s, write=True),
@@ -244,6 +259,9 @@ class OntologyRegistry:
             "dst": link.dst,
             "rel": link.rel,
             "props": link.props,
+            "classification": int(link.classification),
+            "compartments": link.compartments,
+            "shared": link.shared,
         }
         headers = {
             **_headers(self.ctx, self.s, write=True),
@@ -423,6 +441,9 @@ def _object_row(row: dict[str, Any]) -> dict[str, Any]:
         "kind": row.get("kind") or kind_of(str(row.get("id", ""))),
         "props": row.get("props") or {},
         "created_at": row.get("created_at"),
+        "classification": row.get("classification", 0) or 0,
+        "compartments": row.get("compartments") or [],
+        "shared": bool(row.get("shared", False)),
     }
 
 
@@ -434,6 +455,9 @@ def _link_row(row: dict[str, Any]) -> dict[str, Any]:
         "rel": row.get("rel"),
         "props": row.get("props") or {},
         "created_at": row.get("created_at"),
+        "classification": row.get("classification", 0) or 0,
+        "compartments": row.get("compartments") or [],
+        "shared": bool(row.get("shared", False)),
     }
 
 
