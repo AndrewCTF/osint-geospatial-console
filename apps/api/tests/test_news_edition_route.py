@@ -5,8 +5,15 @@ from app.news import store
 from app.main import create_app
 
 
-def test_edition_endpoint_empty_state():
+async def _no_articles():
+    return []
+
+
+def test_edition_endpoint_empty_state(monkeypatch):
     store.reset()
+    # Avoid real RSS fetch + reason-tier LLM: an empty corpus degrades fast to a
+    # well-formed empty edition (the path we want to assert is public + 200).
+    monkeypatch.setattr(news_routes, "_ensure_articles", _no_articles)
     app = create_app()
     with TestClient(app) as c:
         r = c.get("/api/news/edition")
