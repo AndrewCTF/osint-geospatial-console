@@ -172,7 +172,12 @@ export class SimController {
 
   // ── agent integrator (swarm / attack) ────────────────────────────────────
   private initAgents(plan: SimPlan): void {
+    // A dense swarm labels every drone → an unreadable pile of overlapping text.
+    // Above this count, swarm members carry NO per-drone label (the single swarm
+    // summary label covers them); standalone units always keep their label.
+    const dense = (plan.agents?.length ?? 0) > 24;
     plan.agents!.forEach((spec, i) => {
+      const showLabel = !(spec.swarmId && dense);
       const rt: RtAgent = {
         spec,
         lat: spec.launch.lat,
@@ -213,7 +218,7 @@ export class SimController {
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 60_000_000),
         },
-        label: labelFor(spec.label),
+        ...(showLabel ? { label: labelFor(spec.label) } : {}),
         name: spec.label,
         properties: { kind: 'sim-uav', sim: true, ...(spec.swarmId ? { swarmId: spec.swarmId } : {}) },
       });

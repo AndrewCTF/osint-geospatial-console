@@ -237,6 +237,30 @@ async def _incident_membership(
     return hits
 
 
+def _resolved_identity(mmsi: str) -> dict[str, Any]:
+    """The vessel's merged identity from entity resolution (Phase 1).
+
+    A vessel's MMSI changes over its life; resolution fuses every MMSI / IMO /
+    name / callsign it has been seen under into one canonical entity. This lets
+    the dossier show "also known as" — the whole history under one identity —
+    instead of a single, fragmentable MMSI. Degrades to a self-identity when the
+    resolver has not seen this vessel yet.
+    """
+    try:
+        from app.intel import resolve  # noqa: PLC0415
+
+        canonical = resolve.canonical_of(f"vessel:{mmsi}")
+        aliases = resolve.aliases_of(canonical)
+        return {
+            "canonical_id": canonical,
+            "aliases": aliases,
+            "mmsi_history": sorted({a["value"] for a in aliases if a["type"] == "mmsi"}),
+            "imo": next((a["value"] for a in aliases if a["type"] == "imo"), None),
+        }
+    except Exception:  # noqa: BLE001
+        return {"canonical_id": f"vessel:{mmsi}", "aliases": [], "mmsi_history": [mmsi]}
+
+
 async def vessel_dossier(mmsi: str) -> dict[str, Any]:
     eid = f"vessel:{mmsi}"
     live_pts = _track(eid, "vessel")
@@ -274,6 +298,7 @@ async def vessel_dossier(mmsi: str) -> dict[str, Any]:
     return {
         "found": True,
         "mmsi": mmsi,
+        "identity": _resolved_identity(mmsi),
         "name": name,
         "category": vessel_category(ship_type),
         "ship_type": ship_type,

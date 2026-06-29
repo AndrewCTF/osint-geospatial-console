@@ -11,6 +11,7 @@ import {
 import type { LayerAdapter, AdapterCtx } from './types.js';
 import { satelliteStyle } from './styles.js';
 import { labelFor } from './labelStyle.js';
+import { PrimitiveEntityLayer } from './PrimitiveEntityLayer.js';
 import { apiFetch } from '../../transport/http.js';
 import { isMobileDevice } from '../../shell/device.js';
 
@@ -99,6 +100,11 @@ function jdToMs(jd: Cesium.JulianDate): number {
 // resample ever blocks a frame.
 export class SatelliteAdapter implements LayerAdapter {
   private ds: Cesium.CustomDataSource;
+  // Icons+labels render as ONE BillboardCollection/LabelCollection off the
+  // (graphics-less) entities — 4k orbiting entity billboards otherwise made the
+  // visualizer walk every sat each frame. Entities keep position (SGP4 sampled)
+  // + name + props so selection/getById still resolve them.
+  private prim: PrimitiveEntityLayer | null = null;
   // Raw TLE lines per satellite. We DON'T call twoline2satrec here — sgp4init
   // for 4 k satellites is a ~100 ms synchronous block; instead we keep the lines
   // and build the SatRec lazily in the chunked pump (recCache), so even the
@@ -124,6 +130,27 @@ export class SatelliteAdapter implements LayerAdapter {
   async attach(viewer: Cesium.Viewer): Promise<void> {
     await viewer.dataSources.add(this.ds);
     if (this.detached || viewer.isDestroyed()) return;
+    this.prim = new PrimitiveEntityLayer(viewer.scene, {
+      // Satellites carry no heading and a fixed accent tint; one style for all.
+      styleFn: () => {
+        const s = satelliteStyle();
+        return { imageUri: s.imageUri, scale: s.scale, color: s.color, rotationRad: 0 };
+      },
+      labelFn: (props) => (props['name'] as string) || `NORAD ${props['noradId'] ?? ''}`,
+      billboardBase: () => ({
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 60_000_000),
+        scaleByDistance: new Cesium.NearFarScalar(2_000_000, 1.2, 40_000_000, 0.5),
+      }),
+      labelBase: (text) => labelFor(text) as unknown as Cesium.Label.ConstructorOptions,
+      getClock: () => viewer.clock.currentTime,
+      // Orbits move continuously — mirror each frame the clock advances (rides
+      // the existing render; paused timeline freezes the constellation correctly).
+      shouldAnimate: () => viewer.clock.shouldAnimate,
+      pulse: false,
+      filter: false,
+    });
     await this.refreshTles();
     this.fetchTimer = window.setInterval(
       () => void this.refreshTles(),
@@ -144,6 +171,8 @@ export class SatelliteAdapter implements LayerAdapter {
     this.queue = [];
     this.queued.clear();
     this.recCache.clear();
+    this.prim?.destroy();
+    this.prim = null;
     try {
       this.props.ctx.viewer.dataSources.remove(this.ds, true);
     } catch {
@@ -182,6 +211,7 @@ export class SatelliteAdapter implements LayerAdapter {
       for (const e of [...this.ds.entities.values]) {
         if (!next.has(e.id)) {
           this.ds.entities.removeById(e.id);
+          this.prim?.remove(String(e.id));
           this.lastSampleMs.delete(e.id);
         }
       }
@@ -340,25 +370,12 @@ export class SatelliteAdapter implements LayerAdapter {
         }),
       );
     } else {
-      const style = satelliteStyle();
+      // Graphics-less entity (position + name + props); the icon + label are
+      // painted by the batched primitive layer. props feed its style/label fns.
       const label = name || `NORAD ${norad}`;
-      this.ds.entities.add({
-        id,
-        position: sampled,
-        billboard: {
-          image: style.imageUri,
-          scale: style.scale,
-          color: style.color,
-          verticalOrigin: Cesium.VerticalOrigin.CENTER,
-          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 60_000_000),
-          // Satellites are far at world view; grow a little as you zoom toward orbit.
-          scaleByDistance: new Cesium.NearFarScalar(2_000_000, 1.2, 40_000_000, 0.5),
-        },
-        label: labelFor(label),
-        name: label,
-        properties: { kind: 'satellite', name, noradId: norad },
-      });
+      const props = { kind: 'satellite', name, noradId: norad };
+      const ent = this.ds.entities.add({ id, position: sampled, name: label, properties: props });
+      this.prim?.sync(ent, props);
     }
   }
 }

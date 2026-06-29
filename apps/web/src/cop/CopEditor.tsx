@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { Widget, Btn, SectionLabel, MicroLabel } from '../shell/instruments.js';
+import { OrbatTree } from './OrbatTree.js';
 import {
   useCop,
   composeSidc,
@@ -14,6 +15,7 @@ import {
   type Echelon,
 } from './copStore.js';
 import { getDrawController } from '../globe/draw.js';
+import { planRoute, type RouteMode } from '../globe/routePlanner.js';
 import type { LayerRegistry } from '../registry/LayerRegistry.js';
 
 const COP_LAYER = 'mil.cop.notional';
@@ -92,6 +94,34 @@ export function CopEditor({ registry }: { registry: LayerRegistry }): JSX.Elemen
     });
   };
 
+  // A* route: capture waypoints, then route each leg around land (naval) or over
+  // gentler terrain (ground). Stores the dense routed path as a friendly line.
+  const drawRoute = (mode: RouteMode): void => {
+    if (!draw) return;
+    setStatus(`click ${mode} waypoints; right-click / Finish to route…`);
+    draw.drawPolyline((verts) => {
+      if (verts.length < 2) {
+        setStatus('need ≥2 waypoints');
+        return;
+      }
+      setStatus(`routing ${mode} (sampling terrain)…`);
+      planRoute(verts, mode)
+        .then((res) => {
+          addLine({
+            side: 'friendly',
+            label: mode === 'naval' ? 'NAVAL RTE' : 'GND RTE',
+            coords: res.coords,
+          });
+          setStatus(
+            res.blockedFallback
+              ? `${mode} route added — some legs had no path (straight fallback)`
+              : `${mode} route added ✓ (${res.coords.length} pts, grid ${res.cells})`,
+          );
+        })
+        .catch(() => setStatus('route failed'));
+    });
+  };
+
   const drawRing = (): void => {
     if (!draw) return;
     setStatus('click centre, then click the edge to set radius…');
@@ -117,6 +147,7 @@ export function CopEditor({ registry }: { registry: LayerRegistry }): JSX.Elemen
 
   return (
     <div className="space-y-2 p-2">
+      <OrbatTree />
       <Widget title="Build symbol" count={`${units.length} units`}>
         {/* Affiliation */}
         <SectionLabel title="Affiliation" />
@@ -181,6 +212,13 @@ export function CopEditor({ registry }: { registry: LayerRegistry }): JSX.Elemen
           <Btn onClick={() => draw?.finish()} disabled={noDraw}>Finish line</Btn>
         </div>
         <div className="mt-1.5">
+          <MicroLabel>A* routes (terrain-aware)</MicroLabel>
+          <div className="grid grid-cols-2 gap-1.5 mt-1">
+            <Btn tone="accent" onClick={() => drawRoute('naval')} disabled={noDraw}>⚓ Naval route</Btn>
+            <Btn tone="accent" onClick={() => drawRoute('ground')} disabled={noDraw}>⛰ Ground route</Btn>
+          </div>
+        </div>
+        <div className="mt-1.5">
           <Btn onClick={() => { draw?.cancel(); setStatus(null); }} disabled={noDraw} className="w-full justify-center">
             Cancel drawing
           </Btn>
@@ -204,7 +242,7 @@ export function CopEditor({ registry }: { registry: LayerRegistry }): JSX.Elemen
         </div>
         <div className="grid grid-cols-3 gap-1.5 mt-2">
           <Btn tone="accent" onClick={() => void save()} disabled={busy}>Save</Btn>
-          <Btn onClick={reset}>Reset</Btn>
+          <Btn onClick={reset} title="Load the notional example laydown (illustrative)">Load example</Btn>
           <Btn onClick={clearAll}>Clear</Btn>
         </div>
       </Widget>

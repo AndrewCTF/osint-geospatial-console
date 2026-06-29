@@ -15,7 +15,8 @@ function label(text: string, color: Cesium.Color): Cesium.LabelGraphics.Construc
     backgroundPadding: new Cesium.Cartesian2(6, 3),
     pixelOffset: new Cesium.Cartesian2(0, -12),
     verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    // Depth-tested so the globe occludes a far-side annotation label rather
+    // than bleeding it through the opposite hemisphere.
   };
 }
 
@@ -35,7 +36,7 @@ export function installAnnotations(viewer: Cesium.Viewer): () => void {
           color: color.withAlpha(0.85),
           outlineColor: Cesium.Color.WHITE.withAlpha(0.9),
           outlineWidth: 1.5,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          // Depth-tested so the globe occludes a far-side annotation point.
         },
       };
       if (a.label) opts.label = label(a.label, color);

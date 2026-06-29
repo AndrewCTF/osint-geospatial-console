@@ -140,6 +140,39 @@ def redact_for(
     ]
 
 
+def redact_features(
+    user_clearance: object,
+    user_compartments: object,
+    fc: object,
+    *,
+    level_key: str = "classification",
+    comp_key: str = "compartments",
+) -> object:
+    """Drop GeoJSON features the user may not read, keyed off ``properties``.
+
+    A FeatureCollection carries its level in ``feature["properties"]``, not at the
+    top level — so ``redact_for`` (which reads top-level keys) can't filter it.
+    Returns the same envelope with ``features`` filtered. Anything that isn't a
+    FeatureCollection (no list ``features``) is returned unchanged — live OSINT
+    feeds carry no classification, so this is a no-op on them; the teeth land on
+    classified ontology-backed collections.
+    """
+    if not isinstance(fc, dict) or not isinstance(fc.get("features"), list):
+        return fc
+    kept = [
+        f
+        for f in fc["features"]
+        if isinstance(f, dict)
+        and can_read(
+            user_clearance,
+            user_compartments,
+            (f.get("properties") or {}).get(level_key, 0),
+            (f.get("properties") or {}).get(comp_key),
+        )
+    ]
+    return {**fc, "features": kept}
+
+
 if __name__ == "__main__":  # tiny self-check (ponytail: one runnable check)
     assert marking(SECRET, ["NOFORN"]) == "SECRET//NOFORN"
     assert marking(0) == "UNCLASSIFIED"
@@ -152,4 +185,9 @@ if __name__ == "__main__":  # tiny self-check (ponytail: one runnable check)
     assert can_read(4, [], 3, ["NOFORN"]) is False  # missing compartment
     assert can_read(4, ["NOFORN"], 3, ["noforn"]) is True  # case-insensitive
     assert redact_for(2, [], [{"classification": 3}, {"classification": 1}]) == [{"classification": 1}]
+    _fc = {"type": "FeatureCollection", "features": [
+        {"properties": {"classification": 3}}, {"properties": {"classification": 0}}]}
+    assert [f["properties"]["classification"] for f in redact_features(0, [], _fc)["features"]] == [0]
+    assert len(redact_features(3, [], _fc)["features"]) == 2
+    assert redact_features(0, [], {"count": 1}) == {"count": 1}  # non-FC unchanged
     print("classification self-check OK")

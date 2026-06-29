@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as Cesium from 'cesium';
 import { MapboxTerrainProvider } from '@macrostrat/cesium-martini';
 import { isMobileDevice } from '../shell/device.js';
+import { useSettings } from '../state/settings.js';
 import type { LayerRegistry } from '../registry/LayerRegistry.js';
 import { useTime, useSelection, useImagery } from '../state/stores.js';
 import type { ImageryMode } from '../state/stores.js';
@@ -11,12 +12,16 @@ import { LayerCompositor } from './LayerCompositor.js';
 import { installSelectionReticle } from './selectionReticle.js';
 import { installSelectionTrack } from './selectionTrack.js';
 import { installSpotlight } from './SpotlightLayer.js';
-import { createDrawController, setDrawController } from './draw.js';
+import { installFov } from './FovLayer.js';
+import { installProjection } from './ProjectionLayer.js';
+import { createDrawController, setDrawController, getDrawController } from './draw.js';
+import { useContextMenu } from './contextMenuStore.js';
 import { installAnnotations } from './AnnotationLayer.js';
 import { installWatchboxes } from './WatchboxLayer.js';
 import { useInvestigation } from '../graph/investigationStore.js';
 import { prewarmIcons } from './icons.js';
 import { ChipLayer } from '../imagery/ChipLayer.js';
+import { backendUrl } from '../transport/http.js';
 
 interface Props {
   ionToken: string;
@@ -83,14 +88,13 @@ function applyGoogleGate(
   }
 }
 
-// Dark, English-everywhere basemap (Carto Dark Matter, proxied through our
-// backend so no third-party host appears in the browser network panel and
-// the provider is swappable in one place). Works without any Cesium ion
-// token, with full 3D rendering on the ellipsoid.
+// Dark, English-everywhere basemap proxied through the backend. The backend
+// caches Carto @2x tiles and supports deep zoom; a previous bundled z0-6 tile
+// pack booted offline but became blurry when the camera got close.
 function buildDarkBasemap(): Cesium.ImageryLayer {
   const provider = new Cesium.UrlTemplateImageryProvider({
-    url: '/tiles/basemap/{z}/{x}/{y}.png',
-    maximumLevel: 18,
+    url: backendUrl('/tiles/basemap/{z}/{x}/{y}.png'),
+    maximumLevel: 22,
   });
   return Cesium.ImageryLayer.fromProviderAsync(Promise.resolve(provider), {});
 }
@@ -99,7 +103,7 @@ function buildDarkBasemap(): Cesium.ImageryLayer {
 // (z≥14), proxied + disk-cached by the backend. No ion token involved.
 function buildSatImagery(): Cesium.ImageryLayer {
   const provider = new Cesium.UrlTemplateImageryProvider({
-    url: '/tiles/sat/{z}/{x}/{y}.jpg',
+    url: backendUrl('/tiles/sat/{z}/{x}/{y}.jpg'),
     maximumLevel: 19,
   });
   return Cesium.ImageryLayer.fromProviderAsync(Promise.resolve(provider), {});
@@ -133,7 +137,7 @@ function buildImageryOverlay(
 // encoding it decodes.
 function buildFreeTerrain(): Cesium.TerrainProvider {
   return new MapboxTerrainProvider({
-    urlTemplate: '/tiles/terrain/{z}/{x}/{y}.png',
+    urlTemplate: backendUrl('/tiles/terrain/{z}/{x}/{y}.png'),
     maxZoom: 15,
     tileSize: 256,
   }) as unknown as Cesium.TerrainProvider;
@@ -369,7 +373,54 @@ export function GlobeCanvas({
     //    adjacent tiles (~3x tile fetch/upload); the visible set is enough.
     // Mobile renders at 1× device pixels (a 3× Samsung panel supersamples to a
     // brutal fill rate otherwise — the overheating). Desktop keeps up to 1.5×.
-    viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, isMobileDevice() ? 1.0 : 1.5);
+    // Render at NATIVE device pixels (sharp), capped by the operator's
+    // renderPixelCap setting so an extreme DPR can't explode the back-buffer.
+    // The old line set resolutionScale = min(DPR, 1.5) but left
+    // useBrowserRecommendedResolution at its DEFAULT (true), which forces the
+    // device-pixel base to 1.0 and only multiplies by resolutionScale — so on a
+    // DPR=2 (Retina / 200% scale / Chrome zoom) display the globe rendered at
+    // css×1.5 = 0.75× native (measured), the "pixelated in Chrome, sharp in
+    // Firefox" report. Setting it false makes Cesium honour devicePixelRatio;
+    // resolutionScale then trims the buffer to css × min(DPR, cap).
+    viewer.useBrowserRecommendedResolution = false;
+    // ADAPTIVE resolution — the cure for "sharp but laggy". Render at native
+    // device pixels (capped by renderPixelCap) when the camera is STILL, and drop
+    // to ~1× device pixels WHILE the camera moves: you can't see the softness
+    // mid-pan, and the lower fill keeps the drag smooth. Full-res is sharp but
+    // heavy; this pays that cost only on the still frame where it actually shows.
+    // buffer = css × dpr × resolutionScale ⇒ resolutionScale = min(dpr,cap)/dpr.
+    const MOTION_PIXEL_CAP = 1.0; // device-pixel cap during camera motion
+    let restoreTimer: number | null = null;
+    const setScale = (cap: number): void => {
+      if (viewer.isDestroyed()) return;
+      const dpr = window.devicePixelRatio || 1;
+      const next = Math.min(1, cap / dpr);
+      if (Math.abs(viewer.resolutionScale - next) < 0.005) return; // no realloc if unchanged
+      viewer.resolutionScale = next;
+      viewer.scene.requestRender();
+    };
+    const idleCap = (): number => (isMobileDevice() ? 1.0 : useSettings.getState().renderPixelCap);
+    const toIdle = (): void => setScale(idleCap());
+    const toMotion = (): void => setScale(Math.min(idleCap(), MOTION_PIXEL_CAP));
+    toIdle();
+    const onMoveStart = (): void => {
+      if (restoreTimer != null) {
+        window.clearTimeout(restoreTimer);
+        restoreTimer = null;
+      }
+      toMotion();
+    };
+    const onMoveEnd = (): void => {
+      // Debounce so an inertial settle doesn't snap to sharp then re-drop.
+      if (restoreTimer != null) window.clearTimeout(restoreTimer);
+      restoreTimer = window.setTimeout(toIdle, 180);
+    };
+    viewer.camera.moveStart.addEventListener(onMoveStart);
+    viewer.camera.moveEnd.addEventListener(onMoveEnd);
+    // Live: re-apply when the operator drags the sharpness/FPS slider, and when
+    // the window moves to a monitor of a different DPR.
+    const unsubRenderScale = useSettings.subscribe(toIdle);
+    window.addEventListener('resize', toIdle);
     scene.globe.maximumScreenSpaceError = 2.0;
     scene.globe.preloadSiblings = false;
     // Terrain+imagery tile cache. Kept at the Cesium default (100): an earlier
@@ -443,7 +494,24 @@ export function GlobeCanvas({
       if (id && /^(aircraft|vessel|sim|incident):/.test(id)) {
         useSelection.getState().select(id);
         useInvestigation.getState().searchAround(id);
+        return;
       }
+      // Empty ground (and not mid-draw) → open the map context menu at the
+      // picked lat/lon. The draw toolbox's own right-click only matters while a
+      // draw op is armed, so it still wins then.
+      if (getDrawController()?.active) return;
+      const cart = viewer.camera.pickEllipsoid(click.position, scene.globe.ellipsoid);
+      if (!cart) return;
+      const c = Cesium.Cartographic.fromCartesian(cart);
+      const rect = viewer.canvas.getBoundingClientRect();
+      useContextMenu
+        .getState()
+        .openAt(
+          rect.left + click.position.x,
+          rect.top + click.position.y,
+          Cesium.Math.toDegrees(c.latitude),
+          Cesium.Math.toDegrees(c.longitude),
+        );
     }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
 
     // Pulsing reticle around the currently-selected entity.
@@ -452,6 +520,11 @@ export function GlobeCanvas({
     const detachTrack = installSelectionTrack(viewer);
     // Sensor fog-of-war spotlight that follows the selected sim drone (FMV toggle).
     const detachSpotlight = installSpotlight(viewer);
+    // FOV footprint + boresight lines for the selected satellite (real) or
+    // aircraft (notional). Toggled from the EntityPanel.
+    const detachFov = installFov(viewer);
+    // Route-projection reachable-area overlay (decision support, on-demand).
+    const detachProjection = installProjection(viewer);
     // Shared map-draw toolbox (COP placement, watchbox AOIs, annotations).
     const drawCtl = createDrawController(viewer);
     setDrawController(drawCtl);
@@ -480,9 +553,16 @@ export function GlobeCanvas({
     return () => {
       handler.destroy();
       viewer.camera.changed.removeEventListener(onCameraChanged);
+      unsubRenderScale();
+      window.removeEventListener('resize', toIdle);
+      viewer.camera.moveStart.removeEventListener(onMoveStart);
+      viewer.camera.moveEnd.removeEventListener(onMoveEnd);
+      if (restoreTimer != null) window.clearTimeout(restoreTimer);
       detachReticle();
       detachTrack();
       detachSpotlight();
+      detachFov();
+      detachProjection();
       drawCtl.dispose();
       setDrawController(null);
       detachAnnotations();

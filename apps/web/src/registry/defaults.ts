@@ -419,6 +419,63 @@ export const defaultLayers: readonly LayerDescriptor[] = [
     emits: ['event'],
   },
 
+  // ── CONFLICT / CYBER ─────────────────────────────────────────────────
+  // REAL armed-conflict events from GDELT 2.0 (keyless): fights, air strikes,
+  // shelling, bombings, mass violence — actual war (Ukraine/Russia, Gaza, Sudan,
+  // …), refreshed every 15 min, rendered as red AREAS with "ACTOR → ACTOR ·
+  // event (Nx)" labels. This is the headline conflict layer; default ON.
+  {
+    id: 'conflict.gdelt.live',
+    group: 'conflict',
+    title: 'Conflict — armed events (GDELT, live)',
+    kind: 'geojson',
+    auth: 'none',
+    endpoint: '/api/conflict/live?hours=6',
+    refresh: { mode: 'pull', ttlSec: 900 },
+    time: { temporal: true },
+    crs: 'EPSG:4326',
+    license: 'GDELT 2.0 (keyless)',
+    opacity: 1,
+    visibleByDefault: true,
+    emits: ['event'],
+  },
+  // Cross-domain SIGNAL fusion (GPS jamming, dark vessels, AIS gaps, emergency
+  // squawks) — these are inferences/warnings, NOT confirmed war. Kept separate
+  // from the real-events layer above; off by default.
+  {
+    id: 'intel.incidents.live',
+    group: 'conflict',
+    title: 'Signals — fused warnings (areas)',
+    kind: 'geojson',
+    auth: 'none',
+    endpoint: '/api/intel/brief',
+    refresh: { mode: 'pull', ttlSec: 60 },
+    time: { temporal: true },
+    crs: 'EPSG:4326',
+    license: 'derived (multi-source fusion)',
+    opacity: 1,
+    visibleByDefault: false,
+    emits: ['event'],
+  },
+  // Internet outages (CAIDA IODA) as red/orange areas with a label. Geo is
+  // best-effort — country/region/ASN events without a point are skipped and
+  // counted in the feed note (see AreaAdapter.iodaPoint).
+  {
+    id: 'cyber.ioda.outages',
+    group: 'cyber',
+    title: 'Internet outages — IODA (areas)',
+    kind: 'geojson',
+    auth: 'none',
+    endpoint: '/api/cyber/ioda/outages?days=7',
+    refresh: { mode: 'pull', ttlSec: 600 },
+    time: { temporal: true },
+    crs: 'EPSG:4326',
+    license: 'CAIDA IODA',
+    opacity: 1,
+    visibleByDefault: false,
+    emits: ['outage'],
+  },
+
   // ── SPACE ────────────────────────────────────────────────────────────
   // Curated CelesTrak groups, each a separate toggle (all off by default).
   // Positions are SGP4-propagated client-side from these TLEs (SatelliteAdapter)

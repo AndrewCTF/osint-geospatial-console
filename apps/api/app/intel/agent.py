@@ -21,7 +21,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from app import llm
-from app.intel import actions, analytics, baseline, deception, dossier, emitter, incidents
+from app.intel import actions, analytics, baseline, classification, deception, dossier, emitter, incidents
 from app.intel.geo import BBox, bbox_from_radius
 from app.intel.incident_store import incident_store
 from app.keys import UserCtx
@@ -514,8 +514,33 @@ def _scope_label(bbox: BBox | None) -> str:
     return "global" if bbox is None else "scoped AOI"
 
 
+def _redact_tool_result(
+    clearance: int, compartments: tuple[str, ...], result: Any
+) -> Any:
+    """Need-to-know seam: drop anything above the reader's clearance/compartments
+    BEFORE a read-tool result reaches the LLM conversation or the SSE frame.
+
+    GeoJSON FeatureCollections filter by ``properties.classification``; plain
+    ``list[dict]`` rows filter by their top-level ``classification``. Every other
+    shape passes through unchanged. Honest scope: live OSINT feeds
+    (query_vessels/query_aircraft/gps_jamming) carry NO classification field, so
+    this is a no-op on them (defense-in-depth + future-proof). The teeth land on
+    the classified ontology-backed rows (intel_brief, lookups) that DO carry a
+    level. This does NOT "secure the feeds" — it secures classified ontology rows.
+    """
+    if isinstance(result, dict) and isinstance(result.get("features"), list):
+        return classification.redact_features(clearance, compartments, result)
+    if isinstance(result, list):
+        return classification.redact_for(clearance, compartments, result)
+    return result
+
+
 async def run_agent(
-    q: str, bbox: BBox | None, ctx: UserCtx | None = None
+    q: str,
+    bbox: BBox | None,
+    ctx: UserCtx | None = None,
+    clearance: int = 0,
+    compartments: tuple[str, ...] = (),
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield the live agent trace as events: thinking | tool_call | tool_result |
     action | app_var | clarification | final | error | done. The route serialises
@@ -797,6 +822,9 @@ async def run_agent(
                 result = await tool[1](args, bbox)
             except Exception as exc:  # noqa: BLE001
                 result = {"error": f"{type(exc).__name__}: {exc}"}
+            # Need-to-know: redact above the reader's clearance BEFORE the result
+            # reaches the LLM or the SSE frame (no-op on unclassified live feeds).
+            result = _redact_tool_result(clearance, compartments, result)
             if name == "intel_brief" and isinstance(result, dict):
                 _index(result)
             ms = round((time.monotonic() - tt) * 1000)
@@ -868,6 +896,8 @@ async def run_agent(
         "recommended_detection": final.get("recommended_detection"),
         "follow_up": final.get("follow_up") or [],
         "derived": bool(final.get("_derived")),
+        # The need-to-know level this run executed at (keyless ⇒ UNCLASSIFIED).
+        "operated_at_clearance": classification.marking(clearance, compartments),
     }
     yield {
         "type": "done",

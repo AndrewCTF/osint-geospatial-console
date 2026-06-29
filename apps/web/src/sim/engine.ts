@@ -150,12 +150,28 @@ function buildSwarm(p: SwarmParams, jammers: Jammer[], napOfEarth: boolean): Sim
     '#ef4444',
     'sim:swarm:0',
   );
+  // A swarm flying unopposed never gets engaged ("0 intercepted") and draws no
+  // defensive ring. Place a notional point air-defence at the target so the raid
+  // is a real engagement: the site engages up to its salvo cap, the rest leak
+  // through (a 100-drone swarm saturates a single battery — the whole point).
+  const defenses: DefenseSite[] = [
+    {
+      id: 'sim:swarm:def:0',
+      name: 'Point air defence',
+      lat: p.target.lat,
+      lon: p.target.lon,
+      rangeKm: 30,
+      color: '#4d8dff',
+      pk: 0.45,
+    },
+  ];
   return {
     scenario: 'drone-swarm',
     durationSec,
     units: [],
     routes,
     agents,
+    defenses,
     jammers,
     station: p.launch,
     napOfEarth,

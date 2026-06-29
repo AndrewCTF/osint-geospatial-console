@@ -53,6 +53,33 @@
   --font-label: 'Inter', 'IBM Plex Sans', system-ui, sans-serif;
 }
 
+/* ── Light theme ───────────────────────────────────────────────────────────
+   Standard global token override, toggled by state/theme.ts (data-theme on
+   <html>). Every component reads var(--bg-*) / var(--txt-*) so the whole chrome
+   flips; the Cesium globe canvas is not token-coloured, so the map itself stays
+   dark (a light basemap would be a separate change). */
+:root[data-theme='light'] {
+  --bg-0: #eef1f5;
+  --bg-1: #ffffff;
+  --bg-2: #f3f5f8;
+  --bg-3: #e7ebf0;
+  --bg-4: #d9dfe6;
+  --line: rgba(15, 22, 32, 0.1);
+  --line-2: rgba(15, 22, 32, 0.16);
+  --txt-0: #10151c;
+  --txt-1: #33414f;
+  --txt-2: #5d6776;
+  --txt-3: #8b95a2;
+  --txt-4: #aab2bd;
+  --accent: #2575c0;
+  --accent-dim: rgba(37, 117, 192, 0.12);
+  --accent-line: rgba(37, 117, 192, 0.4);
+  --warn: #b7791f;
+  --alert: #d8392f;
+  --ok: #1f9d6b;
+  --mag: #b13fc4;
+}
+
 html,
 body,
 #root {

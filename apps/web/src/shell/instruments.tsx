@@ -34,7 +34,7 @@ export function SectionLabel({
 // ── micro caps label (.lbl) ─────────────────────────────────────────────────
 export function MicroLabel({ children, className = '' }: { children: ReactNode; className?: string }): JSX.Element {
   return (
-    <span className={`text-[10px] font-medium tracking-[0.08em] uppercase text-txt-3 ${className}`}>{children}</span>
+    <span className={`text-[10px] font-medium tracking-[0.08em] uppercase text-txt-2 ${className}`}>{children}</span>
   );
 }
 
@@ -156,8 +156,8 @@ export function KV({ children, className = '' }: { children: ReactNode; classNam
 export function KVRow({ k, v, warn = false }: { k: string; v: ReactNode; warn?: boolean }): JSX.Element {
   return (
     <>
-      <span className="mono text-[9px] tracking-[0.4px] uppercase text-txt-3">{k}</span>
-      <span className={`mono text-right ${warn ? 'text-[#ffb3ae]' : 'text-txt-1'}`}>{v}</span>
+      <span className="mono text-[9px] tracking-[0.4px] uppercase text-txt-2">{k}</span>
+      <span className={`mono text-right ${warn ? 'text-[#ffb3ae]' : 'text-txt-0'}`}>{v}</span>
     </>
   );
 }
@@ -264,7 +264,7 @@ export function Widget({
         : 'none';
   return (
     <section
-      className={`rounded-md border border-line bg-bg-1/70 p-2.5 ${className}`}
+      className={`rounded-md border border-line-2 bg-bg-1/90 p-2.5 ${className}`}
       style={{ boxShadow: shadow }}
     >
       {title && (

@@ -25,9 +25,11 @@ from app.intel.watch import (
     alert_object,
     candidates_from_brief,
     candidates_from_snapshot,
+    candidates_from_vessels,
     evaluate_rules,
     evaluate_session,
     risk_indicator,
+    standing_detections,
     within_geofence,
 )
 from app.keys import UserCtx
@@ -121,6 +123,60 @@ def test_candidates_from_brief_incident_and_domain_scoped() -> None:
     # high threat → rank 4
     di = next(c for c in cands if c.entity_id == "incident:inc1" and c.kind == "incident")
     assert di.severity_rank == 4
+
+
+def test_candidates_from_vessels_military_only() -> None:
+    feats = [
+        _feat(56.3, 26.5, {"mmsi": "111", "name": "FRIGATE", "shipType": 35}),  # military
+        _feat(56.4, 26.6, {"mmsi": "222", "name": "AUX", "shipType": 55}),  # mil law/aux
+        _feat(56.5, 26.7, {"mmsi": "333", "name": "EVER GIVEN", "shipType": 70}),  # cargo
+        _feat(56.6, 26.8, {"mmsi": "444", "name": "NO TYPE"}),  # unknown → skip
+    ]
+    cands = candidates_from_vessels(feats)
+    pairs = {(c.entity_id, c.kind) for c in cands}
+    assert ("vessel:111", "military_vessel") in pairs
+    assert ("vessel:222", "military_vessel") in pairs
+    # cargo + untyped vessels produce nothing
+    assert not any(c.entity_id in {"vessel:333", "vessel:444"} for c in cands)
+
+
+# ── LEVEL view: standing detections report presence, not a one-shot crossing ────
+
+
+def test_standing_detections_is_level_not_edge() -> None:
+    # The consistency guarantee: a contact SITTING inside an AOI is reported on
+    # EVERY call — unlike evaluate_rules, which fires the ENTER once then goes quiet.
+    r = _rule(lat=26.5, lon=56.3, radius_nm=50, kinds=["military_vessel"])
+    inside = _Candidate("vessel:111", "military_vessel", 56.3, 26.5, 3, "military vessel FRIGATE")
+
+    # edge path fires once, then nothing while it stays inside
+    assert len(evaluate_rules([r], [inside])) == 1
+    assert evaluate_rules([r], [inside]) == []
+
+    # level path reports it every time, regardless of prior calls / membership state
+    for _ in range(3):
+        dets = standing_detections([r], [inside])
+        assert len(dets) == 1
+        assert dets[0]["entity_id"] == "vessel:111"
+        assert dets[0]["kind"] == "military_vessel"
+        assert dets[0]["severity_word"] == "medium"
+
+    # a contact outside the AOI is not a standing detection
+    outside = _Candidate("vessel:111", "military_vessel", 0.0, 0.0, 3, "x")
+    assert standing_detections([r], [outside]) == []
+
+
+def test_standing_detections_respects_kind_and_severity() -> None:
+    # kind-scoped rule ignores a non-matching candidate; severity floor gates too.
+    r = _rule(kinds=["military_vessel"], min_severity=4)
+    mil_air = _Candidate("aircraft:a1", "military_air", 56.3, 26.5, 3, "jet")  # wrong kind
+    low_sev = _Candidate("vessel:111", "military_vessel", 56.3, 26.5, 3, "ship")  # below floor
+    assert standing_detections([r], [mil_air, low_sev]) == []
+    # raise severity to the floor → it now reports
+    hot = _Candidate("vessel:111", "military_vessel", 56.3, 26.5, 4, "ship")
+    assert len(standing_detections([r], [hot])) == 1
+    # disabled rule reports nothing
+    assert standing_detections([_rule(enabled=False, kinds=["military_vessel"])], [hot]) == []
 
 
 # ── transition diff: ENTER then EXIT, no per-tick spam ──────────────────────────

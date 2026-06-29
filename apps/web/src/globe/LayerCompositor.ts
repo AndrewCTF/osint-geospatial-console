@@ -10,6 +10,7 @@ import { AisWsAdapter } from './adapters/AisWsAdapter.js';
 import { CablesAdapter } from './adapters/CablesAdapter.js';
 import { SatelliteAdapter } from './adapters/SatelliteAdapter.js';
 import { MilSymbolAdapter } from './adapters/MilSymbolAdapter.js';
+import { AreaAdapter } from './adapters/AreaAdapter.js';
 
 // AOI-aware bbox helper used by all adapters that accept a bbox query.
 function aoiBboxQuery(): string | null {
@@ -37,6 +38,10 @@ function viewportQuery(
 ): () => string | null {
   const GLOBAL_BBOX = `lamin=-85&lomin=-180&lamax=85&lomax=180&limit=${limit}`;
   return () => {
+    // Viewer torn down (HMR / dashboard switch) while a poll timer is still
+    // pending: its camera/scene getters throw "_cesiumWidget is undefined".
+    // Bail so the stale poll no-ops instead of erroring.
+    if (viewer.isDestroyed()) return null;
     const rect = viewer.camera.computeViewRectangle();
     if (rect) {
       const s = Cesium.Math.toDegrees(rect.south);
@@ -211,6 +216,10 @@ export class LayerCompositor {
     this.desiredOpacity.set(id, opacity);
     const a = this.adapters.get(id);
     if (!a) return;
+    // Aircraft icons render as batched primitives off graphics-less entities, so
+    // the entity walk below can't dim them — the adapter exposes setLayerOpacity
+    // to re-tint the primitive collection. No-op for adapters without it.
+    (a as { setLayerOpacity?: (n: number) => void }).setLayerOpacity?.(opacity);
     const ds = (a as { ds?: Cesium.CustomDataSource | Cesium.GeoJsonDataSource }).ds;
     if (!ds) return;
     for (const e of ds.entities.values) {
@@ -224,6 +233,20 @@ export class LayerCompositor {
     // id so it never reaches the geojson/aircraft styling path (icon guardrail).
     if (d.id.startsWith('mil.cop.')) {
       return new MilSymbolAdapter({ ctx });
+    }
+    // Conflict-incident areas (fusion brief) and internet-outage areas (IODA) —
+    // translucent severity-coloured ellipses + labels, NOT point icons.
+    if (
+      d.id.startsWith('intel.incidents') ||
+      d.id.startsWith('cyber.ioda') ||
+      d.id.startsWith('conflict.')
+    ) {
+      const kind = d.id.startsWith('cyber.ioda')
+        ? 'ioda'
+        : d.id.startsWith('conflict.')
+          ? 'conflict'
+          : 'incidents';
+      return new AreaAdapter({ ctx, endpoint: d.endpoint, kind, intervalSec: d.refresh.ttlSec ?? 60 });
     }
     // websocket layers
     if (d.kind === 'websocket' && d.id === 'maritime.aisstream') {
@@ -304,16 +327,11 @@ export class LayerCompositor {
         ...(refreshOnMove && { refreshOnMove }),
         ...(wsEndpoint && { ws: wsEndpoint }),
       });
-      // Vessels cluster to declutter shipping lanes at world scale. Aircraft do
-      // NOT: Cesium re-clusters over EVERY entity on each camera move, which ran
-      // on the main thread and was the source of the drag-lag (the GPU sits ~0%
-      // — the wall was JS, not raster). The world-view aircraft count is already
-      // capped (viewportQuery worldLimit), so individual billboards draw cheaply
-      // and the per-move re-cluster cost is gone.
-      if (style === 'vessel') {
-        const ds = (adapter as unknown as { ds?: Cesium.CustomDataSource }).ds;
-        if (ds) configureVesselClustering(ds);
-      }
+      // Poll vessels (digitraffic/keyless) render as batched primitives off
+      // graphics-less entities now, so Cesium EntityCluster has nothing to cluster
+      // — the world-view count bubbles come from VesselClusterPrimitive inside the
+      // adapter instead. (AISStream above still uses EntityCluster: its WS adapter
+      // has not been moved to primitives yet.) Aircraft never clustered.
       return adapter;
     }
     return null;

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Cesium from 'cesium';
 import { useSelection, useAlerts } from '../state/stores.js';
+import { aircraftStyle, vesselStyle } from '../globe/adapters/styles.js';
 import { tracks } from '../intel/tracks.js';
 import { fetchEnrichment, type Enrichment, type Airport } from '../transport/entity.js';
 import { flyToPosition, followEntity, stopFollow } from '../globe/camera.js';
@@ -17,11 +18,19 @@ import {
   Hero,
   IconTile,
   Widget,
+  MicroLabel,
+  StatusDot,
   type BadgeTone,
 } from '../shell/instruments.js';
 import { ConnectionsCard } from './ConnectionsCard.js';
+import { AcarsCard } from './AcarsCard.js';
 import { ImageryCard } from './ImageryCard.js';
 import { PatternOfLifeCard } from './PatternOfLifeCard.js';
+import { DossierNarrativeCard } from './DossierNarrativeCard.js';
+import { VesselClassCard } from './VesselClassCard.js';
+import { SituationPanel } from '../situations/SituationPanel.js';
+import { useProjection } from '../globe/ProjectionLayer.js';
+import { useFov } from '../globe/FovLayer.js';
 import { resolveAircraftFamily, aircraftSilhouette, vesselSilhouette } from './silhouettes.js';
 import { useChip } from '../imagery/chipStore.js';
 import { useInvestigation } from '../graph/investigationStore.js';
@@ -45,11 +54,21 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
   const [enrichment, setEnrichment] = useState<Enrichment | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
   const [track, setTrack] = useState(tracks.get(id ?? ''));
+  // 1 Hz wall clock so the freshness "Last seen / Last refresh" ages tick up
+  // live without a new fix arriving.
+  const [now, setNow] = useState(() => Date.now());
+  // Receipt-side freshness: wall-clock ms of the last time this entity's fix
+  // (position or observation time) actually CHANGED on our side — that is the
+  // honest "Last refresh", distinct from the AIS/ADS-B observation time.
+  const lastRefreshRef = useRef<number>(Date.now());
+  const freshKeyRef = useRef<string>('');
 
   // Snapshot the selected entity continuously so values update in place.
   useEffect(() => {
     setSnap(null);
     setTrack(tracks.get(id ?? ''));
+    freshKeyRef.current = '';
+    lastRefreshRef.current = Date.now();
     if (!viewer || !id) return;
     const tick = () => {
       // A destroyed viewer (HMR / globe ErrorBoundary) throws on .dataSources.
@@ -62,6 +81,13 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
       if (e.name) next.name = e.name;
       if (props['kind']) next.kind = String(props['kind']);
       if (pos) next.position = pos;
+      // Stamp the receipt clock only when the fix genuinely moved/aged, so a
+      // re-poll that re-sends the same fix doesn't reset "Last refresh".
+      const fk = `${String(props['t'] ?? props['seen_at'] ?? '')}|${pos ? `${pos.lat.toFixed(4)},${pos.lon.toFixed(4)}` : ''}`;
+      if (fk !== freshKeyRef.current) {
+        freshKeyRef.current = fk;
+        lastRefreshRef.current = Date.now();
+      }
       setSnap(next);
       setTrack(tracks.get(id));
     };
@@ -79,7 +105,10 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
   // stationary aircraft and nothing else in the snapshot has changed.
   useEffect(() => {
     if (!id) return;
-    const t = window.setInterval(() => setTrack(tracks.get(id)), 1000);
+    const t = window.setInterval(() => {
+      setTrack(tracks.get(id));
+      setNow(Date.now());
+    }, 1000);
     return () => window.clearInterval(t);
   }, [id]);
 
@@ -105,6 +134,7 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
   // Continuous-follow toggle. Reset when the selection changes; stop following
   // on unmount so the camera doesn't stay locked to a stale entity.
   const [following, setFollowing] = useState(false);
+  const fovOn = useFov((s) => s.enabled);
   useEffect(() => {
     setFollowing(false);
     return () => {
@@ -121,15 +151,40 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
     );
   }
 
+  // A Situation is an aggregate case file, not a map entity — delegate to its
+  // dedicated tabbed panel (Summary/Intel/Reporting/Properties/Link/Media).
+  if (id.startsWith('situation:')) {
+    return <SituationPanel id={id} viewer={viewer ?? null} />;
+  }
+
   return (
     <div className="p-4 space-y-5">
-      <Header snap={snap} id={id} enrichment={enrichment} />
+      <Header
+        snap={snap}
+        id={id}
+        enrichment={enrichment}
+        now={now}
+        lastRefreshMs={lastRefreshRef.current}
+      />
 
       <ProfileCard enrichment={enrichment} snap={snap} />
 
-      {snap && <StatsCard snap={snap} />}
+      {snap && <DetailsCard snap={snap} now={now} lastRefreshMs={lastRefreshRef.current} />}
 
       {snap && <FlightCard enrichment={enrichment} snap={snap} />}
+
+      {snap?.kind === 'aircraft' && (
+        <AcarsCard
+          kind="aircraft"
+          icao24={typeof snap.properties['icao24'] === 'string' ? (snap.properties['icao24'] as string) : null}
+          callsign={typeof snap.properties['callsign'] === 'string' ? (snap.properties['callsign'] as string) : null}
+          registration={
+            enrichment?.kind === 'aircraft'
+              ? ((enrichment as { registration?: string | null }).registration ?? null)
+              : null
+          }
+        />
+      )}
 
       {snap?.position && viewer && (
         <div className="flex flex-wrap gap-2">
@@ -175,6 +230,52 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
           >
             ⊞ Load imagery here
           </Btn>
+          {(snap.kind === 'aircraft' || snap.kind === 'satellite') && (
+            <Btn
+              size="sm"
+              title="Toggle field-of-view footprint + boresight lines (satellite = real geometry, aircraft = notional camera cone)"
+              onClick={() => useFov.getState().setEnabled(!useFov.getState().enabled)}
+              className={fovOn ? 'border-accent-line text-accent' : ''}
+            >
+              ⨀ FOV
+            </Btn>
+          )}
+          {(snap.kind === 'vessel' || snap.kind === 'aircraft') && (
+            <Btn
+              size="sm"
+              title="Draw a +1h/+3h/+6h reachable-area projection from the last fix (decision support, not observed motion)"
+              onClick={() => {
+                const proj = useProjection.getState();
+                if (proj.show && proj.entityId === id) {
+                  proj.clear();
+                  return;
+                }
+                const p = snap.properties;
+                const num = (...keys: string[]): number => {
+                  for (const k of keys) {
+                    const v = p[k];
+                    if (typeof v === 'number' && Number.isFinite(v)) return v;
+                  }
+                  return 0;
+                };
+                // Vessels report knots (sog); aircraft report velocity_ms (m/s) →
+                // convert (1 m/s = 1.94384 kn).
+                let speedKn = num('sog', 'speed_kn', 'gs', 'speed');
+                const vms = num('velocity_ms');
+                if (!speedKn && vms) speedKn = vms * 1.94384;
+                const cogRaw = num('cog', 'track_deg', 'track', 'heading');
+                proj.project({
+                  entityId: id,
+                  lat: snap.position!.lat,
+                  lon: snap.position!.lon,
+                  speedKn,
+                  cog: cogRaw || null,
+                });
+              }}
+            >
+              ⤳ Project reach
+            </Btn>
+          )}
         </div>
       )}
 
@@ -208,6 +309,28 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
       )}
 
       <PatternOfLifeCard id={id} kind={snap?.kind ?? ''} viewer={viewer ?? null} />
+
+      <DossierNarrativeCard id={id} kind={snap?.kind ?? ''} />
+
+      {snap?.kind === 'vessel' && (
+        <VesselClassCard
+          lengthM={
+            ((enrichment?.kind === 'vessel' ? (enrichment as { length_m?: number | null }).length_m : null) ??
+              (snap?.properties?.['length_m'] as number | undefined)) ?? null
+          }
+          shipType={
+            ((enrichment?.kind === 'vessel' ? (enrichment as { vessel_type?: string | null }).vessel_type : null) ??
+              (snap?.properties?.['shipType'] as string | undefined)) ?? null
+          }
+          sogKn={
+            (typeof snap?.properties?.['sog'] === 'number'
+              ? (snap.properties['sog'] as number)
+              : typeof snap?.properties?.['speed'] === 'number'
+                ? (snap.properties['speed'] as number)
+                : undefined) ?? null
+          }
+        />
+      )}
 
       <ImageryCard id={id} kind={snap?.kind ?? ''} />
 
@@ -404,21 +527,73 @@ async function actionErrorText(r: Response): Promise<string> {
 }
 
 // ── entity kind → category glyph + threat colour ────────────────────────────
-// ◆ for dark/unknown, ✈ aircraft, ⛴ vessel. A dark-vessel candidate (the live
-// `darkCandidate` flag the SAR layer sets) flips the tile to alert red.
+// The tile glyph + colour are resolved from the SAME aircraftStyle/vesselStyle
+// classification the map icon uses, so the panel always matches what's drawn on
+// the globe (no forked category logic). Each vessel/aircraft subtype gets its own
+// glyph; a dark-vessel candidate flips to an alert-red diamond.
 function isDark(snap: PanelSnapshot | null): boolean {
   return snap?.properties?.['darkCandidate'] === true;
 }
-function glyphFor(snap: PanelSnapshot | null): string {
-  if (isDark(snap)) return '◆';
-  switch (snap?.kind) {
-    case 'aircraft':
-      return '✈';
-    case 'vessel':
-      return '⛴';
-    default:
-      return '◆';
+
+const AIRCRAFT_GLYPH: Record<string, string> = {
+  airliner: '✈',
+  private: '➤',
+  helicopter: '⊹',
+  glider: '◇',
+  military: '✦',
+  emergency: '⚠',
+};
+const VESSEL_GLYPH: Record<string, string> = {
+  cargo: '▤',
+  tanker: '⬢',
+  fishing: '⚓',
+  passenger: '⛴',
+  military: '✦',
+  sailing: '⛵',
+  pleasure: '⛵',
+  tug: '⊕',
+  sar: '✚',
+  generic: '⛴',
+};
+const OTHER_GLYPH: Record<string, string> = {
+  quake: '◉',
+  camera: '▣',
+  fire: '✦',
+};
+
+interface Category {
+  glyph: string;
+  color: string;
+  label: string;
+  tone: BadgeTone;
+}
+function categoryOf(snap: PanelSnapshot | null): Category {
+  const p = snap?.properties ?? {};
+  if (isDark(snap)) return { glyph: '◆', color: 'var(--alert)', label: 'dark candidate', tone: 'alert' };
+  if (snap?.kind === 'aircraft') {
+    const s = aircraftStyle(p);
+    return {
+      glyph: AIRCRAFT_GLYPH[s.kind] ?? '✈',
+      color: s.color.toCssHexString(),
+      label: s.kind,
+      tone: s.emergency ? 'alert' : 'accent',
+    };
   }
+  if (snap?.kind === 'vessel') {
+    const s = vesselStyle(p);
+    return {
+      glyph: VESSEL_GLYPH[s.kind] ?? '⛴',
+      color: s.color.toCssHexString(),
+      label: s.kind,
+      tone: s.dark ? 'alert' : 'ok',
+    };
+  }
+  return {
+    glyph: OTHER_GLYPH[snap?.kind ?? ''] ?? '◆',
+    color: 'var(--txt-1)',
+    label: snap?.kind ?? 'object',
+    tone: kindBadgeTone(snap?.kind),
+  };
 }
 function kindBadgeTone(kind: string | undefined): BadgeTone {
   switch (kind) {
@@ -441,10 +616,14 @@ function Header({
   snap,
   id,
   enrichment,
+  now,
+  lastRefreshMs,
 }: {
   snap: PanelSnapshot | null;
   id: string;
   enrichment: Enrichment | null;
+  now: number;
+  lastRefreshMs: number;
 }): JSX.Element {
   const display =
     (enrichment?.kind === 'aircraft' && (enrichment as { registration?: string }).registration) ||
@@ -452,7 +631,7 @@ function Header({
     snap?.name ||
     id;
   // ID line built from the REAL properties we already read: prefer a
-  // domain identifier (MMSI / ICAO24), then flag, then last-seen.
+  // domain identifier (MMSI / ICAO24), then flag.
   const p = snap?.properties ?? {};
   const idParts: string[] = [];
   if (typeof p['mmsi'] === 'string' || typeof p['mmsi'] === 'number') idParts.push(`MMSI ${p['mmsi']}`);
@@ -462,10 +641,13 @@ function Header({
     (enrichment?.kind === 'vessel' && (enrichment as { flag_country?: string }).flag_country) ||
     (typeof p['flag'] === 'string' ? (p['flag'] as string) : null);
   if (flag) idParts.push(String(flag));
-  if (typeof p['last_seen'] === 'string') idParts.push(`seen ${shortTime(p['last_seen'] as string)}`);
   if (idParts.length === 0) idParts.push(id);
 
-  const dark = isDark(snap);
+  const cat = categoryOf(snap);
+  const moving = snap?.kind === 'vessel' || snap?.kind === 'aircraft';
+  const seenMs = lastSeenMs(p);
+  const seenAge = seenMs != null ? now - seenMs : null;
+  const refreshAge = Math.max(0, now - lastRefreshMs);
   const operator =
     (enrichment?.kind === 'aircraft' &&
       [
@@ -475,13 +657,12 @@ function Header({
         .filter(Boolean)
         .join(' · ')) ||
     null;
-  const tileColor = dark ? 'var(--alert)' : 'var(--txt-1)';
 
   return (
     <header className="flex items-start gap-3">
-      <IconTile color={tileColor}>{glyphFor(snap)}</IconTile>
+      <IconTile color={cat.color}>{cat.glyph}</IconTile>
       <div className="min-w-0 flex-1">
-        <div className="mono text-[10px] tracking-[0.03em] text-txt-3 truncate" title={idParts.join(' · ')}>
+        <div className="mono text-[10px] tracking-[0.03em] text-txt-2 truncate" title={idParts.join(' · ')}>
           {idParts.join(' · ')}
         </div>
         <h2
@@ -491,51 +672,220 @@ function Header({
           {display}
         </h2>
         <div className="flex flex-wrap items-center gap-2 mt-2.5">
-          {dark ? (
-            <Badge tone="alert">dark candidate</Badge>
-          ) : snap?.kind ? (
-            <Badge tone={kindBadgeTone(snap.kind)}>{snap.kind}</Badge>
-          ) : null}
+          {snap?.kind && <Badge tone={kindBadgeTone(snap.kind)}>{snap.kind}</Badge>}
+          {cat.label && cat.label !== snap?.kind && <Badge tone={cat.tone}>{cat.label}</Badge>}
           {operator && <span className="mono text-[10.5px] text-txt-2 truncate">{operator}</span>}
         </div>
+        {moving && (
+          <div className="flex items-center gap-2 mt-2 mono text-[9px] text-txt-2 tabular-nums">
+            <StatusDot tone={freshnessTone(refreshAge)} />
+            <span>updated {relAge(refreshAge)}</span>
+            {seenAge != null && Math.abs(seenAge - refreshAge) > 4000 && (
+              <span>· fix {relAge(seenAge)}</span>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );
 }
 
-function shortTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return `${d.toISOString().slice(11, 19)}Z`;
-}
-
-// ── KV stats (mockup .kv) — only the real fields the snapshot surfaces ───────
-function StatsCard({ snap }: { snap: PanelSnapshot }): JSX.Element | null {
+// ── grouped detail card (Gotham COV idiom) ──────────────────────────────────
+// Identity / Kinematics / Freshness, each its own labelled KV group. Only REAL
+// snapshot fields are shown — the keyless AIS/ADS-B feeds don't broadcast
+// length/draught/destination, so those are never fabricated here.
+function DetailsCard({
+  snap,
+  now,
+  lastRefreshMs,
+}: {
+  snap: PanelSnapshot;
+  now: number;
+  lastRefreshMs: number;
+}): JSX.Element | null {
   const p = snap.properties;
   const num = (k: string): number | null => {
     const v = p[k];
     return typeof v === 'number' && Number.isFinite(v) ? v : null;
   };
+  const str = (...keys: string[]): string | null => {
+    for (const k of keys) {
+      const v = p[k];
+      if (typeof v === 'string' && v.trim() !== '') return v;
+      if (typeof v === 'number') return String(v);
+    }
+    return null;
+  };
   const isVessel = snap.kind === 'vessel';
-  const speed = isVessel ? num('sog') : num('sog') ?? num('velocity') ?? num('speed');
-  const course = isVessel ? num('cog') ?? num('heading') : num('track_deg') ?? num('heading');
-  const speedUnit = isVessel ? 'kn' : 'm/s';
-  const courseLabel = isVessel ? 'COG' : 'Course';
-  const speedLabel = isVessel ? 'SOG' : 'Speed';
+  const isAircraft = snap.kind === 'aircraft';
 
-  const rows: JSX.Element[] = [];
-  if (snap.kind) rows.push(<KVRow key="type" k="Type" v={snap.kind} />);
-  if (speed !== null) rows.push(<KVRow key="spd" k={speedLabel} v={`${speed.toFixed(1)} ${speedUnit}`} />);
-  if (course !== null) rows.push(<KVRow key="crs" k={courseLabel} v={`${course.toFixed(0)}°`} />);
+  // ── Identity ──
+  const idRows: JSX.Element[] = [];
+  if (isVessel) {
+    const code = parseShipType(p);
+    const typeLabel = shipTypeLabel(code);
+    if (typeLabel) idRows.push(<KVRow key="vt" k="Ship type" v={code != null ? `${typeLabel} · ${code}` : typeLabel} />);
+    const mmsi = str('mmsi');
+    if (mmsi) idRows.push(<KVRow key="mmsi" k="MMSI" v={mmsi} />);
+    const imo = str('imo');
+    if (imo) idRows.push(<KVRow key="imo" k="IMO" v={imo} />);
+    const cs = str('callSign', 'callsign');
+    if (cs) idRows.push(<KVRow key="cs" k="Call sign" v={cs} />);
+  } else if (isAircraft) {
+    const icao = str('icao24');
+    if (icao) idRows.push(<KVRow key="ic" k="ICAO24" v={icao.toUpperCase()} />);
+    const cs = str('callsign');
+    if (cs) idRows.push(<KVRow key="cs" k="Callsign" v={cs} />);
+    const sq = str('squawk');
+    if (sq) idRows.push(<KVRow key="sq" k="Squawk" v={sq} warn={['7500', '7600', '7700'].includes(sq)} />);
+    const cat = str('category');
+    if (cat) idRows.push(<KVRow key="cat" k="ADS-B cat" v={cat} />);
+  }
+  const src = str('source');
+  if (src) idRows.push(<KVRow key="src" k="Source" v={src} />);
+
+  // ── Kinematics ──
+  const kRows: JSX.Element[] = [];
+  if (isVessel) {
+    const sog = num('sog');
+    if (sog != null) kRows.push(<KVRow key="sog" k="SOG" v={`${sog.toFixed(1)} kn`} />);
+    const cog = num('cog');
+    if (cog != null) kRows.push(<KVRow key="cog" k="COG" v={`${cog.toFixed(0)}°`} />);
+    const hdg = num('heading');
+    if (hdg != null && hdg !== cog) kRows.push(<KVRow key="hdg" k="Heading" v={`${hdg.toFixed(0)}°`} />);
+    if (p['parked'] === true) kRows.push(<KVRow key="nav" k="Status" v="moored / anchored" />);
+    else if (sog != null && sog >= 0.5) kRows.push(<KVRow key="nav" k="Status" v="underway" />);
+  } else if (isAircraft) {
+    const ms = num('velocity_ms') ?? num('velocity') ?? num('gs');
+    if (ms != null) kRows.push(<KVRow key="spd" k="Speed" v={`${ms.toFixed(0)} m/s · ${(ms * 1.94384).toFixed(0)} kn`} />);
+    const trk = num('track_deg') ?? num('heading');
+    if (trk != null) kRows.push(<KVRow key="trk" k="Track" v={`${trk.toFixed(0)}°`} />);
+    const vs = num('baro_rate') ?? num('geom_rate') ?? num('vert_rate');
+    if (vs != null && vs !== 0) kRows.push(<KVRow key="vs" k="V/S" v={`${vs > 0 ? '↑' : '↓'} ${Math.abs(vs).toFixed(0)} ft/min`} />);
+  }
   if (snap.position) {
-    rows.push(<KVRow key="lat" k="Lat" v={`${snap.position.lat.toFixed(5)}°`} />);
-    rows.push(<KVRow key="lon" k="Lon" v={`${snap.position.lon.toFixed(5)}°`} />);
-    if (snap.kind === 'aircraft' && Number.isFinite(snap.position.alt)) {
-      rows.push(<KVRow key="alt" k="Alt (m)" v={Math.round(snap.position.alt).toLocaleString()} />);
+    kRows.push(<KVRow key="lat" k="Lat" v={`${snap.position.lat.toFixed(5)}°`} />);
+    kRows.push(<KVRow key="lon" k="Lon" v={`${snap.position.lon.toFixed(5)}°`} />);
+    if (isAircraft && Number.isFinite(snap.position.alt)) {
+      const m = snap.position.alt;
+      kRows.push(<KVRow key="alt" k="Alt" v={`${Math.round(m).toLocaleString()} m · ${Math.round(m * 3.28084).toLocaleString()} ft`} />);
     }
   }
+
+  // ── Freshness ── (last AIS/ADS-B fix vs our last receipt)
+  const fRows: JSX.Element[] = [];
+  if (isVessel || isAircraft) {
+    const seenMs = lastSeenMs(p);
+    const refreshAge = Math.max(0, now - lastRefreshMs);
+    fRows.push(<KVRow key="rf" k="Last refresh" v={relAge(refreshAge)} warn={refreshAge >= 120_000} />);
+    if (seenMs != null) {
+      const seenAge = now - seenMs;
+      fRows.push(<KVRow key="ls" k="Last seen" v={`${relAge(seenAge)} ago`} warn={seenAge >= 120_000} />);
+    }
+  }
+
+  if (idRows.length + kRows.length + fRows.length === 0) {
+    if (!snap.kind) return null;
+    return (
+      <Widget title="Details">
+        <KV>
+          <KVRow k="Type" v={snap.kind} />
+        </KV>
+      </Widget>
+    );
+  }
+  return (
+    <Widget title="Details">
+      <div className="space-y-2.5">
+        <Group icon="⬡" title="Identity" rows={idRows} />
+        <Group icon="➤" title="Kinematics" rows={kRows} />
+        <Group icon="◷" title="Freshness" rows={fRows} />
+      </div>
+    </Widget>
+  );
+}
+
+// Labelled KV sub-group inside a Widget — the Gotham "stacked facts" grouping.
+function Group({ icon, title, rows }: { icon: string; title: string; rows: JSX.Element[] }): JSX.Element | null {
   if (rows.length === 0) return null;
-  return <KV>{rows}</KV>;
+  return (
+    <div>
+      <MicroLabel className="flex items-center gap-1.5">
+        <span aria-hidden className="text-txt-2">{icon}</span>
+        {title}
+      </MicroLabel>
+      <KV className="mt-1">{rows}</KV>
+    </div>
+  );
+}
+
+// ── freshness helpers ───────────────────────────────────────────────────────
+// AIS vessels carry the fix time in `t` (epoch seconds); ADS-B aircraft carry
+// `seen_at` with a `seen_pos_s` position-age offset. Normalise both to epoch ms.
+function lastSeenMs(p: Record<string, unknown>): number | null {
+  const norm = (v: number): number => (v > 1e12 ? v : v * 1000); // sec → ms
+  const t = p['t'];
+  if (typeof t === 'number' && Number.isFinite(t)) return norm(t);
+  const seenAt = p['seen_at'];
+  if (typeof seenAt === 'number' && Number.isFinite(seenAt)) {
+    const seenPos = p['seen_pos_s'];
+    return norm(seenAt - (typeof seenPos === 'number' ? seenPos : 0));
+  }
+  const ls = p['last_seen'];
+  if (typeof ls === 'string') {
+    const d = Date.parse(ls);
+    return Number.isNaN(d) ? null : d;
+  }
+  return null;
+}
+
+function relAge(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+// Status-dot tone by receipt age: <15s live, <2m amber, else stale red.
+function freshnessTone(ageMs: number): string {
+  if (ageMs < 15_000) return 'green';
+  if (ageMs < 120_000) return 'amber';
+  return 'red';
+}
+
+// ITU-R M.1371 ship-type code (0-99) → human label. Same buckets as the map's
+// classifyShipType, expanded for the panel.
+function parseShipType(p: Record<string, unknown>): number | null {
+  const raw = p['shipType'] ?? p['ship_type'] ?? p['shiptype'];
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+function shipTypeLabel(code: number | null): string | null {
+  if (code == null || code <= 0) return null;
+  if (code === 30) return 'Fishing';
+  if (code === 31 || code === 32) return 'Towing';
+  if (code === 33) return 'Dredging';
+  if (code === 34) return 'Diving ops';
+  if (code === 35) return 'Military ops';
+  if (code === 36) return 'Sailing';
+  if (code === 37) return 'Pleasure craft';
+  if (code >= 40 && code <= 49) return 'High-speed craft';
+  if (code === 50) return 'Pilot vessel';
+  if (code === 51) return 'SAR';
+  if (code === 52) return 'Tug';
+  if (code === 53) return 'Port tender';
+  if (code === 55) return 'Law enforcement';
+  if (code >= 60 && code <= 69) return 'Passenger';
+  if (code >= 70 && code <= 79) return 'Cargo';
+  if (code >= 80 && code <= 89) return 'Tanker';
+  if (code >= 90 && code <= 99) return 'Other';
+  return `Type ${code}`;
 }
 
 // Great-circle distance in km (haversine) — for distance-to-go to destination.

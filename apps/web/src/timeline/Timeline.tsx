@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type * as Cesium from 'cesium';
-import { useTime } from '../state/stores.js';
+import { useTime, useSelection } from '../state/stores.js';
 import { apiFetch } from '../transport/http.js';
+import { flyToPosition } from '../globe/camera.js';
 import { installHistoryPlayback, type PlaybackController, type PlaybackInfo } from '../globe/HistoryPlayback.js';
 import { usePolReplay } from '../state/polReplayStore.js';
 import { MicroLabel } from '../shell/instruments.js';
@@ -45,10 +46,26 @@ interface Density {
   gaps: number[];
 }
 
+interface LaneEvent {
+  t: number; // epoch ms
+  label: string;
+  lat?: number | null;
+  lon?: number | null;
+  ref_id?: string | null;
+  severity?: string | null;
+}
+interface Lane {
+  id: string;
+  label: string;
+  color: string;
+  events: LaneEvent[];
+}
+
 export function Timeline({ viewer }: Props = {}): JSX.Element {
   const { playing, multiplier, togglePlay, setMultiplier } = useTime();
   const [stamp, setStamp] = useState(() => isoStamp(Date.now()));
   const [density, setDensity] = useState<Density | null>(null);
+  const [lanes, setLanes] = useState<Lane[]>([]);
   const stripRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ start: number; end: number } | null>(null);
 
@@ -195,6 +212,39 @@ export function Timeline({ viewer }: Props = {}): JSX.Element {
       aborter?.abort();
     };
   }, []);
+
+  // Poll the discrete event lanes (incidents + signals) for the multi-track
+  // scrubber. Same ~20h window as the density strip so they share the x-axis.
+  useEffect(() => {
+    let aborter: AbortController | null = null;
+    const pull = async (): Promise<void> => {
+      aborter?.abort();
+      aborter = new AbortController();
+      try {
+        const r = await apiFetch('/api/timeline/events?window_sec=72000', { signal: aborter.signal });
+        if (r.ok) setLanes(((await r.json()).lanes ?? []) as Lane[]);
+      } catch {
+        /* keep last lanes */
+      }
+    };
+    void pull();
+    const id = window.setInterval(() => void pull(), 30_000);
+    return () => {
+      window.clearInterval(id);
+      aborter?.abort();
+    };
+  }, []);
+
+  // Click a lane marker → fly to it, select it, and jump the clock to its time.
+  const onMarker = (ev: LaneEvent): void => {
+    if (!viewer) return;
+    jumpClockTo(viewer, ev.t);
+    setStamp(isoStamp(ev.t));
+    if (typeof ev.lat === 'number' && typeof ev.lon === 'number') {
+      flyToPosition(viewer, ev.lon, ev.lat, 600_000, 0.8);
+    }
+    if (ev.ref_id) useSelection.getState().select(ev.ref_id);
+  };
 
   const onStripMouseDown = (e: React.MouseEvent) => {
     if (!stripRef.current) return;
@@ -413,6 +463,40 @@ export function Timeline({ viewer }: Props = {}): JSX.Element {
           style={{ left: `calc(${playPct}% - 1px)` }}
         />
       </div>
+
+      {/* ── Row 2.5 · event lanes (Gotham multi-track) ─────────────────── */}
+      {density && lanes.some((l) => l.events.length > 0) && (
+        <div className="flex flex-col gap-[3px]">
+          {lanes.map((lane) => (
+            <div key={lane.id} className="flex items-center gap-2">
+              <span
+                className="mono text-[8.5px] uppercase tracking-[0.4px] text-txt-3 w-[84px] shrink-0 truncate flex items-center gap-1"
+                title={`${lane.label} · ${lane.events.length}`}
+              >
+                <span className="h-[6px] w-[6px] rounded-full shrink-0" style={{ background: lane.color }} />
+                {lane.label}
+              </span>
+              <div className="relative flex-1 h-[12px] bg-bg-2 border border-line rounded-sm overflow-hidden">
+                {lane.events.map((ev, i) => {
+                  const pct = ((ev.t - density.from) / (density.to - density.from)) * 100;
+                  if (pct < 0 || pct > 100) return null;
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      title={`${isoStamp(ev.t)} · ${ev.label}`}
+                      onClick={() => onMarker(ev)}
+                      aria-label={`${lane.label}: ${ev.label}`}
+                      className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 h-[8px] w-[8px] rounded-full border border-black/40 hover:scale-150 transition-transform"
+                      style={{ left: `${pct}%`, background: lane.color }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Row 3 · density strip ──────────────────────────────────────── */}
       <div className="dens flex-1 flex flex-col gap-1 min-h-0">

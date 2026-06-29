@@ -9,22 +9,20 @@ import {
   vesselStyle,
 } from './styles.js';
 import { labelFor, aircraftLabelText, vesselLabelText } from './labelStyle.js';
+import {
+  resolveAircraftFamily,
+  aircraftSilhouette,
+  vesselSilhouette,
+} from '../../entity-panel/silhouettes.js';
+import { PrimitiveEntityLayer } from './PrimitiveEntityLayer.js';
+import { VesselClusterPrimitive } from './VesselClusterPrimitive.js';
 import { tracks } from '../../intel/tracks.js';
 import { aircraftDedup } from '../../intel/registry.js';
 import { isMobileDevice } from '../../shell/device.js';
 import { useSelection, useFilters } from '../../state/stores.js';
+import { useSettings } from '../../state/settings.js';
 import { entityPassesFilter } from '../../explorer/HistogramPanel.js';
 import { apiFetch, withWsKey } from '../../transport/http.js';
-
-// Minimum-perceptible deltas for billboard updates. Cesium reloads the
-// underlying GPU resource whenever a billboard property is *reassigned* —
-// even when the new value is identical to the current one. At 4 s polls
-// over 8 K aircraft that turns into a constant icon reload storm: icons
-// blink off then on while the data URI re-decodes. We diff against the
-// current value and skip the assignment when the change is below the
-// noise floor.
-const ROT_EPSILON = 0.01; // ~0.57°
-const SCALE_EPSILON = 0.02;
 
 // Alpha applied to a billboard the active map-side filter (useFilters /
 // HistogramPanel) excludes. The icon stays DRAWN (same SVG image, same
@@ -51,6 +49,65 @@ const DRAIN_BUDGET_MS = 6;
 // report). Subsequent live pushes revert to DRAIN_BUDGET_MS so a push never
 // blocks a frame mid-animation.
 const FIRST_DRAIN_BUDGET_MS = 50;
+
+// Aircraft world pushes apply in ONE frame (operator request 2026-06-27: "all in
+// sync") instead of the time-sliced ripple, so every aircraft that moved this
+// push teleports in the SAME render. To keep that single frame cheap we SKIP
+// aircraft whose reported position is unchanged since last push (the bulk — only
+// the feed slices that refreshed carry a new fix), so per-push work ∝ moved
+// aircraft, not the whole ~13k union. Skip is suppressed while a map filter is
+// active (a filter toggle must re-evaluate every icon's dim). Vessels are
+// untouched — they glide via SampledPositionProperty and stay time-sliced.
+const AIRCRAFT_POS_EPSILON_M = 8; // ≈ ADS-B position noise floor; below this = didn't move
+
+// ── FlightRadar24-style dead-reckoning (operator opt-in 2026-06-28) ──────────
+// OFF by default; gated entirely on `useSettings().aircraftDeadReckon`. The
+// default aircraft path TELEPORTS to each real fix and forbids extrapolation
+// (CLAUDE.md). When the operator opts in, we feed each REAL fix into ONE
+// persistent SampledPositionProperty per aircraft and let Cesium's linear
+// interpolator carry the icon between fixes AND continue PAST the newest fix
+// along the last real segment's velocity (`ExtrapolationType.EXTRAPOLATE`,
+// capped at DEAD_RECKON_MAX_S then HOLD). This is the FR24 effect.
+//
+// The FIRST cut re-created a fresh 2-sample property anchored at a fake
+// 90s-projected point every poll. That lost the trajectory and re-anchored to
+// "now" each time, so a stale RE-SENT fix (the feed repeats the last position
+// until a fresh one lands) snapped the icon BACK and reversed it. The fix:
+// keep the samples, derive velocity from REAL consecutive fixes (so a resend =
+// no new sample = the glide simply continues), and only add a sample when the
+// reported position actually moved (`drLastReal` gate in drain()). Positions
+// while ON are ESTIMATED, not observed; a map badge says so.
+// Glide tuning. The icon EASES from its current rendered position TO each new
+// real fix over ~the last inter-fix gap, so motion is continuous AND always
+// converges on truth. The first cut force-EXTRAPOLATED past the last fix and so
+// overshot, then snapped back when the real fix landed (the jump/reverse the
+// operator saw on this irregular multi-second feed). Easing toward the fix can't
+// overshoot, so it can't snap back. See deadReckonSample().
+const DR_MIN_GLIDE_S = 1.5;
+const DR_MAX_GLIDE_S = 30;
+const DR_MAX_SPEED_MS = 600; // clamp apparent glide speed so a big gap can't streak
+const DR_FUTURE_ISO = '2100-01-01T00:00:00Z';
+
+// Camera altitude (m) above which vessel glide is FROZEN. WHY: vessels glide via
+// SampledPositionProperty, which Cesium re-evaluates every frame the clock
+// advances — and the DataSourceDisplay visualizer update is O(all entities), so
+// ~10k+ gliding vessels re-dirty the whole scene every frame → measured 5-9 FPS
+// at world view (GPU idle; the wall is JS). Above this altitude a vessel's
+// between-fix glide offset projects to << 1px, so freezing it to a
+// ConstantPositionProperty (snap to the real fix, like aircraft teleport) is
+// visually identical but lets requestRenderMode quiet the scene between polls.
+// Operator-approved 2026-06-28: "quick stopgap, but when zoom out it must
+// immediately snap into POS without user seeing" — hence the moveEnd reconcile.
+// Below this altitude vessels glide normally (few on screen → cheap).
+const VESSEL_GLIDE_FREEZE_ALTITUDE_M = 2_000_000; // 2,000 km
+
+// World-view render cap for vessels. The keyless feed returns ~21k vessels; at
+// world view they collapse into cluster bubbles anyway, so a deterministic
+// stable subset (djb2-keyed — same ships persist across polls, no churn) keeps
+// the per-poll O(n) apply + render bounded. Lifts when zoomed in past the
+// freeze altitude. No operator minimum exists for vessels (unlike the ≥8000
+// aircraft invariant), so this is safe to cap.
+const VESSEL_WORLD_CAP = 6000;
 
 
 // Initial great-circle bearing (deg, 0=N) from point 1 to point 2. Used as a
@@ -206,6 +263,15 @@ function identityKey(props: Record<string, unknown>): string | null {
 // - 200 with empty features and no note → green ("no contacts" is fresh data)
 export class PollGeoJsonAdapter implements LayerAdapter {
   private ds: Cesium.CustomDataSource;
+  // Aircraft + vessels: renders the icons+labels as batched primitives off the
+  // (graphics-less) entities, killing the per-frame billboard/label visualizer
+  // walk that was the world-view drag-lag. null for jamming/etc. — those keep
+  // their per-entity Cesium graphics. One adapter instance is a single styleKind,
+  // so this serves whichever (aircraft or vessel) needs it.
+  private primRenderer: PrimitiveEntityLayer | null = null;
+  // Vessels only: world-view count bubbles (replaces Cesium EntityCluster, which
+  // needed the entity billboards that are now graphics-less).
+  private vesselCluster: VesselClusterPrimitive | null = null;
   private timer: number | null = null;
   private aborter: AbortController | null = null;
   private detached = false;
@@ -225,6 +291,84 @@ export class PollGeoJsonAdapter implements LayerAdapter {
   // entityId → last [lon, lat], so we can derive a heading from movement when
   // the feed doesn't carry track/cog (otherwise the icon points north).
   private lastPos = new Map<string, [number, number]>();
+  // Dead-reckon only: last REAL fix position per id (Cartesian). Used to detect
+  // a resent/stale fix (same position) so we DON'T re-glide to a place the icon
+  // already reached.
+  private drLastReal = new Map<string, Cesium.Cartesian3>();
+  // Dead-reckon only: sim-clock time of each id's last REAL fix, to size the
+  // glide duration (≈ the gap between fixes → continuous motion that arrives at
+  // truth just as the next fix lands).
+  private drLastT = new Map<string, Cesium.JulianDate>();
+
+  // FR24-style glide: ease the icon from where it currently renders TO the new
+  // REAL fix over ~the last inter-fix gap. Reuses the entity's SampledPosition-
+  // Property; drops any not-yet-reached future samples first so the new glide
+  // starts cleanly from the current position (no kink back toward the old
+  // target). HOLD past the newest fix — never extrapolate, so never overshoot.
+  private deadReckonSample(
+    existing: Cesium.Entity | undefined,
+    id: string,
+    t0: Cesium.JulianDate,
+    newPos: Cesium.Cartesian3,
+  ): Cesium.SampledPositionProperty {
+    let sampled =
+      existing && existing.position instanceof Cesium.SampledPositionProperty
+        ? existing.position
+        : undefined;
+    // Where the icon is RIGHT NOW (sim-clock time), to start the glide from.
+    let cur: Cesium.Cartesian3 | undefined;
+    if (existing && existing.position) {
+      try {
+        cur = existing.position.getValue(t0) as Cesium.Cartesian3 | undefined;
+      } catch {
+        cur = undefined;
+      }
+    }
+    if (!sampled) {
+      sampled = new Cesium.SampledPositionProperty();
+      sampled.setInterpolationOptions({
+        interpolationAlgorithm: Cesium.LinearApproximation,
+        interpolationDegree: 1,
+      });
+      sampled.forwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+      sampled.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+    } else {
+      // Drop the prior glide's unreached future samples so we don't first head
+      // to the old target and then to the new one.
+      sampled.removeSamples(
+        new Cesium.TimeInterval({
+          start: t0,
+          stop: Cesium.JulianDate.fromIso8601(DR_FUTURE_ISO),
+          isStartIncluded: false,
+          isStopIncluded: true,
+        }),
+      );
+    }
+    const lastT = this.drLastT.get(id);
+    let glideS = lastT
+      ? Math.min(
+          Math.max(Math.abs(Cesium.JulianDate.secondsDifference(t0, lastT)), DR_MIN_GLIDE_S),
+          DR_MAX_GLIDE_S,
+        )
+      : DR_MIN_GLIDE_S;
+    if (cur) {
+      glideS = Math.max(glideS, Cesium.Cartesian3.distance(cur, newPos) / DR_MAX_SPEED_MS);
+      sampled.addSample(t0, cur); // bridge: start from where the icon is now
+    }
+    sampled.addSample(Cesium.JulianDate.addSeconds(t0, glideS, new Cesium.JulianDate()), newPos);
+    this.drLastT.set(id, t0.clone());
+    // Bound memory: keep only the last 5 min.
+    const cutoff = Cesium.JulianDate.addSeconds(t0, -300, new Cesium.JulianDate());
+    sampled.removeSamples(
+      new Cesium.TimeInterval({
+        start: Cesium.JulianDate.fromIso8601('1970-01-01T00:00:00Z'),
+        stop: cutoff,
+        isStartIncluded: true,
+        isStopIncluded: false,
+      }),
+    );
+    return sampled;
+  }
   // Absolute wall-clock target (ms) for the next poll. The grid scheduler books
   // ticks against this fixed timeline so cadence stays steady regardless of how
   // long each poll's fetch + render took. 0 = uninitialised (set on first tick).
@@ -250,6 +394,10 @@ export class PollGeoJsonAdapter implements LayerAdapter {
   private drainHandle: number | null = null;
   // True until the first full payload is placed; gates FIRST_DRAIN_BUDGET_MS.
   private firstDrain = true;
+  // Last vessel glide-freeze state (camera above/below the freeze altitude). Only
+  // a threshold CROSSING does work in reconcileGlideForZoom.
+  private lastFreezeState: boolean | null = null;
+  private detachZoom: (() => void) | null = null;
 
   constructor(private readonly props: Props) {
     this.ds = new Cesium.CustomDataSource(props.ctx.descriptor.id);
@@ -264,6 +412,90 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     // (HMR / rapid layer toggle). Bail if so; accessing viewer.camera on a
     // destroyed viewer throws "Cannot read properties of undefined".
     if (this.detached || viewer.isDestroyed()) return;
+    // Aircraft render as batched primitives (see PrimitiveEntityLayer). The
+    // entities still hold position/name/props for watchbox/histogram/selection;
+    // only the pixels move to the collection. Dead-reckon + clock read live.
+    if (this.props.styleKind === 'aircraft') {
+      this.primRenderer = new PrimitiveEntityLayer(viewer.scene, {
+        styleFn: (props) => {
+          const s = aircraftStyle(props);
+          // No color → white tint (the SVG already carries the category colour;
+          // dim/pulse own the alpha). emergency drives the red pulse.
+          return { imageUri: s.imageUri, scale: s.scale, rotationRad: s.rotationRad, emergency: s.emergency };
+        },
+        // Tilt the camera toward the horizon → swap to the airframe side profile,
+        // tinted the SAME category colour as the top-down icon (yellow airliner,
+        // orange military …) so the side view stays as readable as the top view.
+        sideStyleFn: (props) => {
+          const fam = resolveAircraftFamily(
+            (typeof props['type'] === 'string' ? props['type'] : null) ??
+              (typeof props['icao_type'] === 'string' ? props['icao_type'] : null),
+            typeof props['category'] === 'string' ? props['category'] : null,
+          );
+          const hex = aircraftStyle(props).color.toCssHexString().slice(0, 7);
+          return { imageUri: aircraftSilhouette(fam ?? 'narrowbody', hex), scale: 0.62 };
+        },
+        labelFn: aircraftLabelText,
+        billboardBase: () => ({
+          alignedAxis: Cesium.Cartesian3.UNIT_Z,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          heightReference: Cesium.HeightReference.NONE,
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 40_000_000),
+          scaleByDistance: new Cesium.NearFarScalar(10_000, 1.7, 5_000_000, 0.5),
+        }),
+        labelBase: (text) => labelFor(text) as unknown as Cesium.Label.ConstructorOptions,
+        getClock: () => viewer.clock.currentTime,
+        shouldAnimate: () => useSettings.getState().aircraftDeadReckon,
+        pulse: true,
+        filter: true,
+      });
+    } else if (this.props.styleKind === 'vessel') {
+      this.primRenderer = new PrimitiveEntityLayer(viewer.scene, {
+        styleFn: (props) => {
+          const s = vesselStyle(props);
+          // No color → white tint (the SVG carries the category / dark-vessel red).
+          return { imageUri: s.imageUri, scale: s.scale, rotationRad: s.rotationRad };
+        },
+        // Tilt the camera toward the horizon → swap to the hull side profile,
+        // tinted the vessel's category colour (cargo teal, tanker amber …).
+        sideStyleFn: (props) => {
+          const hex = vesselStyle(props).color.toCssHexString().slice(0, 7);
+          return { imageUri: vesselSilhouette(hex), scale: 0.62 };
+        },
+        labelFn: vesselLabelText,
+        billboardBase: () => ({
+          alignedAxis: Cesium.Cartesian3.UNIT_Z,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          // Same fade as the old vesselBillboard: individual icons live 0→600 km
+          // (culled above), translucency 150→600 km — the world-view handoff to
+          // the count bubbles (VesselClusterPrimitive).
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 600_000),
+          translucencyByDistance: new Cesium.NearFarScalar(150_000, 1.0, 600_000, 0.0),
+          scaleByDistance: new Cesium.NearFarScalar(5_000, 1.7, 400_000, 0.6),
+        }),
+        labelBase: (text) => labelFor(text) as unknown as Cesium.Label.ConstructorOptions,
+        getClock: () => viewer.clock.currentTime,
+        // Vessels glide below the freeze altitude → mirror each frame; above it
+        // they teleport-freeze (constant position) so the mirror idles.
+        shouldAnimate: () =>
+          viewer.camera.positionCartographic.height <= VESSEL_GLIDE_FREEZE_ALTITUDE_M,
+        pulse: false,
+        filter: true,
+      });
+      this.vesselCluster = new VesselClusterPrimitive(viewer, () => {
+        const t = viewer.clock.currentTime;
+        const out: Array<{ lon: number; lat: number }> = [];
+        for (const e of this.ds.entities.values) {
+          const p = e.position?.getValue(t) as Cesium.Cartesian3 | undefined;
+          if (!p) continue;
+          const c = Cesium.Cartographic.fromCartesian(p);
+          out.push({ lon: Cesium.Math.toDegrees(c.longitude), lat: Cesium.Math.toDegrees(c.latitude) });
+        }
+        return out;
+      });
+    }
     if (this.props.refreshOnMove) {
       // Debounce so a multi-step zoom/pan coalesces into one re-poll of the
       // new viewport (not one per intermediate camera event).
@@ -276,6 +508,18 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       this.detachMove = () => {
         if (t != null) window.clearTimeout(t);
         if (!viewer.isDestroyed()) viewer.camera.moveEnd.removeEventListener(onMove);
+      };
+    }
+    // Vessel layers: on camera moveEnd, if we just crossed ABOVE the glide-freeze
+    // altitude, snap every still-gliding vessel to its current position NOW (don't
+    // wait for the next poll) so the per-frame SampledPosition re-eval — the
+    // world-view lag — stops the instant the user finishes zooming out. The snap
+    // is sub-pixel at this altitude, so the operator never sees a jump.
+    if (this.props.styleKind === 'vessel') {
+      const onZoom = (): void => this.reconcileGlideForZoom();
+      viewer.camera.moveEnd.addEventListener(onZoom);
+      this.detachZoom = () => {
+        if (!viewer.isDestroyed()) viewer.camera.moveEnd.removeEventListener(onZoom);
       };
     }
     // Server push (ADS-B): connect the socket for steady world-view updates. The
@@ -295,10 +539,20 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     this.scheduleNext(0);
   }
 
+  // Layer-opacity slider hook for aircraft. The compositor dims most layers by
+  // walking ds.entities and setting billboard alpha, but aircraft icons live in
+  // a primitive collection the entity walk can't reach — so the compositor calls
+  // this. No-op (null renderer) for every other styleKind.
+  setLayerOpacity(opacity: number): void {
+    this.primRenderer?.setLayerOpacity(opacity);
+  }
+
   detach(): void {
     this.detached = true;
     this.detachMove?.();
     this.detachMove = null;
+    this.detachZoom?.();
+    this.detachZoom = null;
     if (this.timer != null) {
       window.clearTimeout(this.timer);
       this.timer = null;
@@ -324,6 +578,12 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     this.ownedIcao.clear();
     this.lastAnchorLL.clear();
     this.lastPos.clear();
+    this.drLastReal.clear();
+    this.drLastT.clear();
+    this.primRenderer?.destroy();
+    this.primRenderer = null;
+    this.vesselCluster?.destroy();
+    this.vesselCluster = null;
     try {
       this.props.ctx.viewer.dataSources.remove(this.ds, true);
     } catch {
@@ -341,7 +601,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
   // overruns, or the tab was backgrounded and we fell more than one interval
   // behind, re-anchor to now (one GRID_MIN_GAP catch-up) instead of a sprint.
   private scheduleNext(delayMs: number): void {
-    if (this.detached) return;
+    if (this.detached || this.props.ctx.viewer.isDestroyed()) return;
     this.timer = window.setTimeout(() => {
       if (this.nextAt === 0) this.nextAt = Date.now();
       void this.poll().finally(() => {
@@ -362,6 +622,10 @@ export class PollGeoJsonAdapter implements LayerAdapter {
   }
 
   private async poll(): Promise<void> {
+    // Viewer destroyed out from under a pending timer (teardown race): every
+    // camera/scene/clock access below throws "_cesiumWidget is undefined".
+    // Bail; scheduleNext stops the loop too.
+    if (this.detached || this.props.ctx.viewer.isDestroyed()) return;
     // While the WS push is healthy AND we're at world view, the pushed blob
     // already carries this data — skip the redundant fetch + render. When zoomed
     // in the push (world-view subset) is insufficient, so the bbox poll runs even
@@ -412,17 +676,39 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     return !q || !q.includes('lamin');
   }
 
+  // On a zoom-out crossing ABOVE VESSEL_GLIDE_FREEZE_ALTITUDE_M, convert every
+  // gliding vessel (SampledPositionProperty) to a ConstantPositionProperty at its
+  // current value so the scene stops re-evaluating thousands of glide curves every
+  // frame (the world-view lag). Cheap + idempotent — only fires on a threshold
+  // crossing. Zoom IN does nothing here: the next poll's glide branch re-seeds
+  // SampledPositionProperty below the altitude.
+  private reconcileGlideForZoom(): void {
+    if (this.props.styleKind !== 'vessel' || this.detached) return;
+    const frozen =
+      this.props.ctx.viewer.camera.positionCartographic.height > VESSEL_GLIDE_FREEZE_ALTITUDE_M;
+    if (frozen === this.lastFreezeState) return;
+    this.lastFreezeState = frozen;
+    if (!frozen) return; // zoom IN: glide resumes on the next poll
+    const t = this.props.ctx.viewer.clock.currentTime;
+    const ents = this.ds.entities;
+    ents.suspendEvents();
+    for (const e of ents.values) {
+      if (e.position instanceof Cesium.SampledPositionProperty) {
+        const v = e.position.getValue(t);
+        if (v) e.position = new Cesium.ConstantPositionProperty(v);
+      }
+    }
+    ents.resumeEvents();
+    this.props.ctx.viewer.scene.requestRender();
+  }
+
   // Open the server-push socket and route inflated frames into the SAME render()
   // path as the poll, so the icon/label/glide guardrails keep a single owner.
   private connectWs(): void {
     if (this.detached || !this.props.ws) return;
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const base = this.props.ws.startsWith('ws')
-      ? this.props.ws
-      : `${proto}://${window.location.host}${this.props.ws}`;
     let ws: WebSocket;
     try {
-      ws = new WebSocket(withWsKey(base));
+      ws = new WebSocket(withWsKey(this.props.ws));
     } catch {
       this.scheduleWsReconnect();
       return;
@@ -485,7 +771,17 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     // "stop" felt the moment each push landed. Enqueue this payload (replacing
     // any still draining; latest wins) and drain a budgeted slice per frame.
     const incoming = fc.features ?? [];
-    const capped = incoming.length > MOBILE_LAYER_CAP ? stableSubset(incoming, MOBILE_LAYER_CAP) : incoming;
+    // Bound the world-view vessel set (they cluster at this zoom anyway). djb2-
+    // keyed stableSubset → the same ships persist across polls, so the upsert-by-id
+    // never churns. Lifts when zoomed in past the freeze altitude.
+    let cap = MOBILE_LAYER_CAP;
+    if (
+      this.props.styleKind === 'vessel' &&
+      this.props.ctx.viewer.camera.positionCartographic.height > VESSEL_GLIDE_FREEZE_ALTITUDE_M
+    ) {
+      cap = Math.min(cap, VESSEL_WORLD_CAP);
+    }
+    const capped = incoming.length > cap ? stableSubset(incoming, cap) : incoming;
     this.pendingFeats = capped.slice(0, MAX_PER_LAYER);
     this.pendingIds = new Set<string>();
     this.pendingIdx = 0;
@@ -500,10 +796,25 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     const entities = this.ds.entities;
     const feats = this.pendingFeats;
     const nextIds = this.pendingIds;
+    // Aircraft (after the first load) apply the WHOLE payload this frame so every
+    // moved icon teleports in sync — not in a ~300ms ripple. The unchanged-skip
+    // below keeps that one frame cheap. Vessels + the first load stay budget-sliced.
+    const syncAll = this.props.styleKind === 'aircraft' && !this.firstDrain;
+    const noFilter = activeFilterClauses().length === 0;
+    // FR24-style dead-reckoning opt-in (off by default). Read once per drain so
+    // a mid-flight toggle takes effect on the next poll. Aircraft only.
+    const deadReckon =
+      this.props.styleKind === 'aircraft' && useSettings.getState().aircraftDeadReckon;
+    // World-view vessels TELEPORT (snap to each real fix) instead of gliding, so
+    // the per-frame SampledPositionProperty re-eval that pinned world view to
+    // ~9 FPS stops. Camera altitude is stable for the duration of one drain pass.
+    const vesselFreeze =
+      this.props.styleKind === 'vessel' &&
+      this.props.ctx.viewer.camera.positionCartographic.height > VESSEL_GLIDE_FREEZE_ALTITUDE_M;
     const deadline =
       performance.now() + (this.firstDrain ? FIRST_DRAIN_BUDGET_MS : DRAIN_BUDGET_MS);
     entities.suspendEvents();
-    while (this.pendingIdx < feats.length && performance.now() < deadline) {
+    while (this.pendingIdx < feats.length && (syncAll || performance.now() < deadline)) {
       const f = feats[this.pendingIdx++];
       if (!f || !f.geometry) continue;
       const props = f.properties as Record<string, unknown>;
@@ -571,6 +882,7 @@ export class PollGeoJsonAdapter implements LayerAdapter {
           // nextIds — the prune phase below will remove the stale entity.
           if (this.ownedIcao.has(id)) {
             entities.removeById(id);
+            this.primRenderer?.remove(id);
             this.ownedIcao.delete(id);
           }
           continue;
@@ -643,12 +955,48 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       const isTrackable = this.props.styleKind === 'aircraft' || this.props.styleKind === 'vessel';
       if (existing) {
         if (this.props.styleKind === 'aircraft') {
-          // TELEPORT mode (operator request 2026-06-21, overriding the prior
-          // glide guardrail): snap the aircraft straight to each new REAL fix —
-          // no interpolation — so the icon shows the latest reported position
-          // instantly, like a raw ADS-B map. Still real-data-only (no synthesis
-          // / dead-reckon). The glide model `upsertAircraftSamples` is kept below
-          // but intentionally UNCALLED so reverting is a one-line swap.
+          if (deadReckon) {
+            // Dead-reckon: add a sample ONLY for a genuinely fresh fix (moved
+            // ≥ epsilon vs the last REAL fix). A resend (the feed repeats the
+            // last position until a new one lands) is left alone so the
+            // persistent property keeps extrapolating forward — re-adding it
+            // would zero the velocity and snap the icon back (the reverse bug).
+            const lastReal = this.drLastReal.get(id);
+            const fresh =
+              !lastReal || Cesium.Cartesian3.distance(lastReal, newPos) >= AIRCRAFT_POS_EPSILON_M;
+            if (!fresh) {
+              if (noFilter) continue; // nothing new — let the glide run
+            } else {
+              existing.position = this.deadReckonSample(
+                existing,
+                id,
+                this.props.ctx.viewer.clock.currentTime.clone(),
+                newPos,
+              );
+              this.drLastReal.set(id, newPos.clone());
+            }
+          } else {
+            // TELEPORT mode (operator request 2026-06-21, overriding the prior
+            // glide guardrail): snap the aircraft straight to each new REAL fix —
+            // no interpolation — so the icon shows the latest reported position
+            // instantly, like a raw ADS-B map. Skip the PropertyBag rebuild +
+            // restyle for an unchanged position to keep the sync pass cheap
+            // (suppressed under an active filter so a toggle re-dims every icon).
+            if (noFilter) {
+              const prev = currentValue<Cesium.Cartesian3>(existing.position);
+              if (prev && Cesium.Cartesian3.distance(prev, newPos) < AIRCRAFT_POS_EPSILON_M) {
+                continue;
+              }
+            }
+            existing.position = new Cesium.ConstantPositionProperty(newPos);
+          }
+        } else if (vesselFreeze) {
+          // World-view vessel TELEPORT: snap straight to the real fix, no glide —
+          // same model as the aircraft teleport above. This is what stops the
+          // every-frame SampledPositionProperty re-eval that pinned world view to
+          // ~9 FPS. Still real-data-only (no synthesis). Glide resumes when the
+          // camera drops below VESSEL_GLIDE_FREEZE_ALTITUDE_M (the next poll, or
+          // immediately via reconcileGlideForZoom on zoom-out).
           existing.position = new Cesium.ConstantPositionProperty(newPos);
         } else if (isTrackable) {
           // Stationary-entity bypass: if the new position is within 100m of
@@ -732,14 +1080,28 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       } else {
         const opts: Cesium.Entity.ConstructorOptions = {
           id,
-          position: newPos,
+          position: deadReckon
+            ? this.deadReckonSample(
+                undefined,
+                id,
+                this.props.ctx.viewer.clock.currentTime.clone(),
+                newPos,
+              )
+            : newPos,
           properties: props,
         };
+        if (deadReckon) this.drLastReal.set(id, newPos.clone());
         this.applyStyle(opts, props);
         // TELEPORT mode: the entity is created at newPos (a ConstantPosition-
-        // Property), i.e. already snapped to the latest real fix — no glide seed
-        // needed. (Glide model `upsertAircraftSamples` retained, uncalled.)
-        entities.add(opts);
+        // Property), already snapped to the latest real fix — no glide seed
+        // needed. With dead-reckon ON it starts on a single-sample property that
+        // begins gliding once the 2nd real fix arrives.
+        const added = entities.add(opts);
+        // Aircraft/vessel pixels live in the primitive collection — paint the
+        // icon+label for the freshly-created (graphics-less) entity.
+        if (this.props.styleKind === 'aircraft' || this.props.styleKind === 'vessel') {
+          this.primRenderer?.sync(added, props);
+        }
       }
     }
     entities.resumeEvents();
@@ -766,8 +1128,11 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       entities.suspendEvents();
       for (const oldId of stale) {
         entities.removeById(oldId);
+        this.primRenderer?.remove(oldId);
         this.lastAnchorLL.delete(oldId);
         this.lastPos.delete(oldId);
+        this.drLastReal.delete(oldId);
+        this.drLastT.delete(oldId);
         const icao = this.ownedIcao.get(oldId);
         if (icao) {
           aircraftDedup.release(icao, layerIdForPrune);
@@ -777,6 +1142,9 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       entities.resumeEvents();
       this.props.ctx.viewer.scene.requestRender();
     }
+    // Re-bin the world-view count bubbles now positions for this payload are in
+    // (no-op unless this is the vessel layer + camera is zoomed out).
+    this.vesselCluster?.refresh();
   }
 
   private applyStyle(
@@ -803,42 +1171,25 @@ export class PollGeoJsonAdapter implements LayerAdapter {
 
     switch (this.props.styleKind) {
       case 'aircraft': {
-        const s = aircraftStyle(props);
-        // Hard invariant: aircraft NEVER render as a Cesium point. If the
-        // style somehow produced an empty imageUri, the billboard would
-        // silently fall back to nothing and Cesium would show its default
-        // primitive (a tiny dot). aircraftStyle's branches all return a
-        // cached data: URI today, but this guard makes the invariant
-        // explicit and future-proof.
-        if (!s.imageUri) {
-          throw new Error('aircraftStyle returned empty imageUri — icon factory is broken');
-        }
-        opts.billboard = aircraftBillboard(s);
-        // Explicitly do NOT set opts.point — see CLAUDE.md invariant.
-        // Always show *something* — analysts complained that bare icons left
-        // them guessing which dot was which. Fallback chain: human-readable
-        // callsign → tail-number registration → ICAO 24-bit hex (uppercased).
+        // Aircraft entities are intentionally GRAPHICS-LESS: the SVG icon + the
+        // callsign label are painted by PrimitiveEntityLayer (batched
+        // BillboardCollection/LabelCollection), called from the point path right
+        // after this entity is added. We keep ONLY position + name + properties
+        // on the entity so watchbox/histogram/counts/selection still read it.
+        // name = the human-readable label so the watchbox evaluator (which reads
+        // e.name) still identifies the contact. Icon guardrail is enforced in the
+        // renderer (aircraftStyle always returns a cached SVG data URI).
         const labelText = aircraftLabelText(props);
-        if (labelText) {
-          opts.label = labelFor(labelText);
-          opts.name = labelText;
-        }
+        if (labelText) opts.name = labelText;
         break;
       }
       case 'vessel': {
-        const s = vesselStyle(props);
-        if (!s.imageUri) {
-          throw new Error('vesselStyle returned empty imageUri — icon factory is broken');
-        }
-        opts.billboard = vesselBillboard(s);
-        // Digitraffic vessels arrive without a name field but with an MMSI —
-        // surface "MMSI 231695000" so the icon is identifiable instead of
-        // anonymous. Real names from AIS still take precedence.
+        // Graphics-less, like aircraft: the SVG icon + name label are painted by
+        // the batched primitive layer (synced right after entities.add). Keep
+        // name on the entity so the watchbox evaluator (reads e.name) and the
+        // count-bubble aggregator identify the contact. MMSI fallback preserved.
         const labelText = vesselLabelText(props);
-        if (labelText) {
-          opts.label = labelFor(labelText);
-          opts.name = labelText;
-        }
+        if (labelText) opts.name = labelText;
         break;
       }
       case 'fire': {
@@ -920,61 +1271,25 @@ export class PollGeoJsonAdapter implements LayerAdapter {
     }
   }
 
-  // Apply (or clear) the active map-side filter dim on an already-rendered
-  // entity. Called from refreshStyle so a filter toggle propagates to the
-  // ~13k entities already on the globe on the next poll/push — translucent for
-  // excluded, full opacity for matching/unfiltered. Never removes the entity,
-  // never swaps the SVG icon for a point (CLAUDE.md invariants).
-  private applyFilterToEntity(e: Cesium.Entity, props: Record<string, unknown>): void {
-    if (!e.billboard) return;
-    const clauses = activeFilterClauses();
-    const dimmed = clauses.length > 0 && !entityPassesFilter(props, clauses);
-    applyFilterVisibility(e.billboard, dimmed);
-  }
-
   private refreshStyle(e: Cesium.Entity, props: Record<string, unknown>): void {
     switch (this.props.styleKind) {
       case 'aircraft': {
-        const s = aircraftStyle(props);
-        // Invariant: never let an aircraft entity lose its billboard image.
-        // If the style accidentally returned a falsy URI we keep the current
-        // image rather than blanking it out (which would let Cesium fall
-        // back to a default point).
-        if (e.billboard && s.imageUri) {
-          updateBillboardImage(e.billboard, s.imageUri);
-          updateRotation(e.billboard, s.rotationRad);
-          updateScale(e.billboard, s.scale);
-        }
-        this.applyFilterToEntity(e, props);
-        // Late-arriving callsigns are common — the first hit from many feeds
-        // is ICAO24 only, then the callsign fills in a few seconds later.
-        // Keep the on-screen label in sync so the user sees the upgrade.
+        // Pixels live in the batched primitive collection — upsert icon image /
+        // rotation / scale / filter-dim / label text there. The entity stays
+        // graphics-less; we only keep e.name fresh so the watchbox evaluator
+        // (which reads e.name) reflects a late-arriving callsign.
+        this.primRenderer?.sync(e, props);
         const labelText = aircraftLabelText(props);
-        if (labelText && e.label) {
-          const current = currentValue<string>(e.label.text);
-          if (current !== labelText) {
-            e.label.text = new Cesium.ConstantProperty(labelText);
-          }
-          if (e.name !== labelText) e.name = labelText;
-        }
+        if (labelText && e.name !== labelText) e.name = labelText;
         break;
       }
       case 'vessel': {
-        const s = vesselStyle(props);
-        if (e.billboard && s.imageUri) {
-          updateBillboardImage(e.billboard, s.imageUri);
-          updateRotation(e.billboard, s.rotationRad);
-          updateScale(e.billboard, s.scale);
-        }
-        this.applyFilterToEntity(e, props);
+        // Pixels live in the batched primitive layer — upsert icon / rotation /
+        // scale / filter-dim / label there. Keep e.name fresh for watchbox + the
+        // count-bubble aggregator (a late AIS name upgrades the MMSI fallback).
+        this.primRenderer?.sync(e, props);
         const labelText = vesselLabelText(props);
-        if (labelText && e.label) {
-          const current = currentValue<string>(e.label.text);
-          if (current !== labelText) {
-            e.label.text = new Cesium.ConstantProperty(labelText);
-          }
-          if (e.name !== labelText) e.name = labelText;
-        }
+        if (labelText && e.name !== labelText) e.name = labelText;
         break;
       }
       case 'jamming': {
@@ -998,77 +1313,6 @@ export class PollGeoJsonAdapter implements LayerAdapter {
       }
     }
   }
-}
-
-// Reassign billboard.image only when the new URI actually differs from the
-// current one. Cesium treats a fresh ConstantProperty as "value changed" and
-// re-decodes the data: URI from scratch every time — at 4 s polls that
-// causes the icon to blank out for a frame, which the operator reports as
-// "icons disappear and come back" / "icons revert to a blue dot".
-function updateBillboardImage(
-  bb: Cesium.BillboardGraphics,
-  nextUri: string,
-): void {
-  const current = currentValue<string>(bb.image);
-  if (current === nextUri) return;
-  bb.image = new Cesium.ConstantProperty(nextUri);
-}
-
-function updateRotation(bb: Cesium.BillboardGraphics, nextRad: number): void {
-  const current = currentValue<number>(bb.rotation);
-  if (current != null && Math.abs(current - nextRad) < ROT_EPSILON) return;
-  bb.rotation = new Cesium.ConstantProperty(nextRad);
-}
-
-function updateScale(bb: Cesium.BillboardGraphics, nextScale: number): void {
-  const current = currentValue<number>(bb.scale);
-  if (current != null && Math.abs(current - nextScale) < SCALE_EPSILON) return;
-  bb.scale = new Cesium.ConstantProperty(nextScale);
-}
-
-// Apply (or clear) the map-side filter dim on a billboard. `dimmed` true → the
-// active filter excludes this contact: fade the icon to FILTER_DIM_ALPHA. false
-// → matching/unfiltered: restore full opacity. We mutate ONLY the color alpha,
-// never the image/rotation/scale (the SVG icon + heading are sacred). The
-// emergency-squawk pulse is a CallbackProperty (see aircraftBillboard) — when an
-// excluded aircraft is pulsing we wrap that callback so it keeps pulsing at the
-// dimmed alpha instead of replacing it with a flat colour (mirrors
-// LayerCompositor.applyEntityOpacity). Idempotent: a stable ConstantProperty at
-// the target alpha is left in place so repeated calls don't churn the GPU
-// resource (same discipline as updateBillboardImage).
-const DIM_EPSILON = 0.02;
-function applyFilterVisibility(bb: Cesium.BillboardGraphics, dimmed: boolean): void {
-  const targetAlpha = dimmed ? FILTER_DIM_ALPHA : 1.0;
-  const cur = bb.color;
-  if (cur instanceof Cesium.CallbackProperty) {
-    // Pulsing emergency icon. Re-wrap the pulse so its alpha is scaled by the
-    // dim factor; when not dimmed (factor 1) we still wrap once so the dimmed
-    // state is reversible, but only if it isn't already our wrapper.
-    const wrapped = (cur as unknown as { __dimWrapped?: boolean }).__dimWrapped === true;
-    const wrappedAlpha = (cur as unknown as { __dimAlpha?: number }).__dimAlpha;
-    if (wrapped && wrappedAlpha != null && Math.abs(wrappedAlpha - targetAlpha) < DIM_EPSILON) {
-      return; // already at the right dim level
-    }
-    if (!dimmed && !wrapped) return; // unwrapped pulse, nothing to dim — leave it
-    const inner = wrapped
-      ? (cur as unknown as { __dimInner: Cesium.CallbackProperty }).__dimInner
-      : cur;
-    const cb = new Cesium.CallbackProperty((time, result) => {
-      const base = inner.getValue(time, result) as Cesium.Color | undefined;
-      const c = base ?? Cesium.Color.WHITE;
-      return Cesium.Color.fromAlpha(c, c.alpha * targetAlpha, result as Cesium.Color | undefined);
-    }, false);
-    (cb as unknown as { __dimWrapped: boolean }).__dimWrapped = true;
-    (cb as unknown as { __dimAlpha: number }).__dimAlpha = targetAlpha;
-    (cb as unknown as { __dimInner: Cesium.CallbackProperty }).__dimInner = inner;
-    bb.color = cb as unknown as Cesium.Property;
-    return;
-  }
-  // Static colour: read the current tint, only rewrite when the alpha actually
-  // moved past the noise floor.
-  const orig = (currentValue<Cesium.Color>(cur) ?? Cesium.Color.WHITE).clone();
-  if (Math.abs(orig.alpha - targetAlpha) < DIM_EPSILON) return;
-  bb.color = new Cesium.ConstantProperty(Cesium.Color.fromAlpha(orig, targetAlpha));
 }
 
 // Read the active filter clause list once per drain pass. Pulled out so the
@@ -1101,55 +1345,8 @@ function jammingStyle(props: Record<string, unknown>): {
   return { color, pixelSize };
 }
 
-function aircraftBillboard(
-  s: ReturnType<typeof aircraftStyle>,
-): Cesium.BillboardGraphics.ConstructorOptions {
-  return {
-    image: s.imageUri,
-    scale: s.scale,
-    rotation: s.rotationRad,
-    alignedAxis: Cesium.Cartesian3.UNIT_Z,
-    verticalOrigin: Cesium.VerticalOrigin.CENTER,
-    horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-    heightReference: Cesium.HeightReference.NONE,
-    // 40M m ceiling so the default boot camera (20M m altitude) still shows
-    // aircraft icons. The previous 12M m cut-off meant analysts saw a blank
-    // globe on first paint until they zoomed in.
-    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 40_000_000),
-    // Scale with camera distance: ~1.7x base when close (≤10 km), ~0.5x when far
-    // (≥5000 km), so icons grow as you zoom in and don't clutter at world scale.
-    scaleByDistance: new Cesium.NearFarScalar(10_000, 1.7, 5_000_000, 0.5),
-    ...(s.emergency && {
-      color: new Cesium.CallbackProperty(
-        () =>
-          Cesium.Color.fromCssColorString('#ef4444').withAlpha(
-            0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 250)),
-          ),
-        false,
-      ) as unknown as Cesium.Property,
-    }),
-  };
-}
-
-function vesselBillboard(
-  s: ReturnType<typeof vesselStyle>,
-): Cesium.BillboardGraphics.ConstructorOptions {
-  // Individual vessel icons only paint when the camera is below ~600 km — at
-  // world / continent scale the EntityCluster aggregate stands in for them so
-  // the Baltic doesn't render as a single green blob. The NearFarScalar fades
-  // alpha from 1.0 at 150 km down to 0 by 600 km so the handoff to the cluster
-  // billboards is a soft cross-fade, not a pop.
-  return {
-    image: s.imageUri,
-    scale: s.scale,
-    rotation: s.rotationRad,
-    alignedAxis: Cesium.Cartesian3.UNIT_Z,
-    verticalOrigin: Cesium.VerticalOrigin.CENTER,
-    horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 600_000),
-    translucencyByDistance: new Cesium.NearFarScalar(150_000, 1.0, 600_000, 0.0),
-    // Grow as you zoom into a port (~1.7x ≤5 km) and shrink at range (~0.6x).
-    scaleByDistance: new Cesium.NearFarScalar(5_000, 1.7, 400_000, 0.6),
-  };
-}
-
+// aircraftBillboard + vesselBillboard removed — aircraft AND vessel icons are now
+// batched primitives built in PrimitiveEntityLayer (the per-Entity billboard +
+// label visualizer walk was the world-view drag-lag). The vessel billboard's
+// 0→600 km ddc + 150→600 km translucency now live in the vessel PrimitiveEntity-
+// Layer config (attach), and the world-view count bubbles in VesselClusterPrimitive.

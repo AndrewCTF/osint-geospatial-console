@@ -48,8 +48,7 @@ export function AlertSubscriber(): null {
     const connect = () => {
       if (stopped) return;
       setWs('connecting');
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(withWsKey(`${proto}://${window.location.host}/ws/alerts`));
+      ws = new WebSocket(withWsKey('/ws/alerts'));
       ws.onopen = () => {
         backoff = 1000;
         setWs('open');

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type * as Cesium from 'cesium';
-import { useAlerts, useImagery } from '../state/stores.js';
+import { useAlerts, useImagery, useSelection } from '../state/stores.js';
 import { useAoi } from '../state/aoi.js';
+import { useSituations, type Severity } from '../situations/situationStore.js';
 import { intel } from '../intel/registry.js';
 import type { DarkVesselCandidate } from '../intel/darkVessel.js';
 import { flyToChokepoint, flyToPosition } from '../globe/camera.js';
@@ -238,6 +239,27 @@ export function IntelPanel({ viewer }: Props): JSX.Element {
         : null;
   const restIncidents = heroTone ? incidents.slice(1, 6) : incidents.slice(0, 6);
 
+  // Promote an incident to a Situation case file: create the aggregate centred on
+  // the incident's AOI, link the incident as a child, and open it.
+  const promoteToSituation = async (inc: BriefIncident): Promise<void> => {
+    const sevMap: Record<string, Severity> = {
+      critical: 'critical',
+      high: 'high',
+      elevated: 'med',
+      medium: 'med',
+      low: 'low',
+    };
+    const sid = await useSituations.getState().create({
+      name: (inc.narrative || 'Incident').slice(0, 48),
+      severity: sevMap[inc.threat_level] ?? 'med',
+      centroid: { lat: inc.centroid.lat, lon: inc.centroid.lon },
+      summary: inc.narrative,
+    });
+    const incId = inc.id.startsWith('incident:') ? inc.id : `incident:${inc.id}`;
+    await useSituations.getState().linkChild(sid, incId, 'contains');
+    useSelection.getState().select(sid);
+  };
+
   const satOn = imageryMode === '3d-sat';
   return (
     <div className="p-3 space-y-4">
@@ -324,15 +346,25 @@ export function IntelPanel({ viewer }: Props): JSX.Element {
                   <span className="mono text-[9px] tabular-nums text-txt-3">
                     {inc.signal_count} signal{inc.signal_count === 1 ? '' : 's'} · {inc.span_km}km
                   </span>
-                  <Btn
-                    size="sm"
-                    onClick={() =>
-                      viewer &&
-                      flyToPosition(viewer, inc.centroid.lon, inc.centroid.lat, 300_000, reduced ? 0 : 1.0)
-                    }
-                  >
-                    slew to
-                  </Btn>
+                  <div className="flex gap-1.5">
+                    <Btn
+                      size="sm"
+                      tone="accent"
+                      title="Create a Situation case file from this incident"
+                      onClick={() => void promoteToSituation(inc)}
+                    >
+                      → Situation
+                    </Btn>
+                    <Btn
+                      size="sm"
+                      onClick={() =>
+                        viewer &&
+                        flyToPosition(viewer, inc.centroid.lon, inc.centroid.lat, 300_000, reduced ? 0 : 1.0)
+                      }
+                    >
+                      slew to
+                    </Btn>
+                  </div>
                 </div>
               </div>
             ))}

@@ -15,7 +15,7 @@ import {
   encodeAwarenessUpdate,
 } from 'y-protocols/awareness';
 
-import { apiFetch, withWsKey } from '../transport/http.js';
+import { apiFetch, backendWsUrl, withWsKey } from '../transport/http.js';
 
 const TAG_SYNC = 0x00;
 const TAG_AWARE = 0x01;
@@ -32,9 +32,7 @@ export interface CollabUser {
 }
 
 function wsBase(): string {
-  if (typeof window === 'undefined') return '';
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}`;
+  return backendWsUrl('/').replace(/\/$/, '');
 }
 
 function bytesToBase64(b: Uint8Array): string {

@@ -493,6 +493,74 @@ async def imagery_chip(
     )
 
 
+@router.post("/api/imagery/splat")
+async def imagery_splat(
+    lat: float = Query(..., ge=-85.0, le=85.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    radius_km: float = Query(2.0, ge=0.1, le=20.0),
+    date: str = Query(..., description="YYYY-MM-DD"),
+    source: str = Query("auto"),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """AOI satellite chip → 3D Gaussian Splat (MapAnything feed-forward).
+
+    Renders one chip for the AOI from ANY available source (the same ladder as
+    ``/api/imagery/chip``: Maxar Open Data VHR → Sentinel-2 10 m → GIBS), then
+    launches a single-image MapAnything recon job. Returns ``{job_id, source}``;
+    the client reuses the existing ``/api/recon/jobs/{id}/events`` SSE +
+    ``result.ply`` + Spark viewer.
+
+    HONEST: a single overhead chip yields a near-2.5D relief splat (a textured
+    surface), strongest where the source is fine (VHR) — not true building 3D,
+    which needs multi-view (the EOGS path). The source + GSD are reported back.
+    """
+    from app.routes import recon  # local import avoids a route-module import cycle
+
+    if not _DATE_RE.match(date):
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    if source not in _CHIP_SOURCES and source != "eusi":
+        raise HTTPException(400, f"source must be one of {_CHIP_SOURCES} or 'eusi'")
+    try:
+        aoi = ondemand.aoi_bbox(lat=lat, lon=lon, radius_km=radius_km)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+    if source == "eusi":
+        # Multi-view: ≥2 ≤1 m/px EUSI chips of the SAME point from diverse
+        # off-nadir angles → real parallax → real 3D (relief ~38% vs ~1% for a
+        # single overhead chip; proven). keyless + server-side, no browser.
+        from app import eusi
+        half_m = min(radius_km * 1000.0 / 2.0, 128.0)  # ≤128 m box ⇒ ≤1 m/px at 256px
+        n_angles = 3
+        chips = await eusi.multiview_chips(lat, lon, n_angles=n_angles, half_m=half_m)
+        if len(chips) < 2:
+            raise HTTPException(
+                502,
+                f"EUSI returned {len(chips)} views — note the keyless EUSI TARA archive "
+                "(apps.euspaceimaging.com/atom/api/tara) now answers ROUTE_NOT_FOUND "
+                "(backend moved to authenticated access), and even when it served, its "
+                "exportImage tiles carry NO RPC camera model → only a flat 2.5D splat. "
+                "For real satellite 3D use POST /api/recon/sat (keyless WV-3 + RPC, IARPA MVS3DM).",
+            )
+        imgs = [(f"eusi_v{i}_{int(m['off_nadir'])}deg.png", png) for i, (png, m) in enumerate(chips)]
+        job_id = recon.register_image_job(imgs, mode="mapany")
+        return {
+            "job_id": job_id,
+            "source": "eusi",
+            "mode": "multiview",
+            "n_views": len(chips),
+            "gsd_m": chips[0][1]["gsd_m"],
+            "views": chips[0][1],  # representative; full list in job logs
+        }
+
+    result = await render_chip(aoi, date, source, settings)
+    if result is None:
+        raise HTTPException(502, "no imagery source could render this AOI")
+    ext = result["ext"]
+    job_id = recon.register_image_job([(f"aoi.{ext}", result["bytes"])], mode="mapany")
+    return {"job_id": job_id, "source": result["meta"]["provider"], "meta": result["meta"]}
+
+
 @router.get("/api/imagery/change")
 async def imagery_change(
     lat: float = Query(..., ge=-85.0, le=85.0),
