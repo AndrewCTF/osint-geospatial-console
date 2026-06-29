@@ -73,11 +73,16 @@ _EVAL_CYCLE_S = 15.0
 # (not scattered) keeps the evaluator honest about WHICH live source backs a kind.
 _KIND_SOURCES: dict[str, str] = {
     "military_air": "aircraft",
+    "military_vessel": "vessel",  # warship (ITU type 35/55) on the warm AIS snapshot
     "jamming": "aircraft",  # GNSS-degraded aircraft = the jamming proxy on the snapshot
     "incident": "incident",
     "dark_vessel": "incident",  # surfaced via the brief's dark-vessel domain
     "quake": "incident",
     "fire": "incident",
+    # Phase-2 behavioral kinds computed from the position-history store.
+    "ais_gap": "history",
+    "rendezvous": "history",
+    "loiter": "history",
 }
 
 # Severity word → the 1..5 scale alert_rules.min_severity uses, so a rule's
@@ -197,6 +202,36 @@ def candidates_from_snapshot(features: list[dict[str, Any]]) -> list[_Candidate]
     return out
 
 
+def candidates_from_vessels(features: list[dict[str, Any]]) -> list[_Candidate]:
+    """Military-vessel signals from the warm AIS snapshot.
+
+    A warship (ITU ship-type 35 / 55 → ``geo.vessel_category == 'military'``) inside
+    a rule's AOI is a ``military_vessel`` detection — the surface-fleet analogue of
+    the aircraft ``military_air`` kind. Read from the SAME warm vessel snapshot the
+    maritime layer serves (``maritime.vessel_snapshot``), so it adds no upstream
+    load. Non-military ships produce nothing here (dark/loiter/rendezvous vessel
+    signals ride the brief + history paths).
+    """
+    from app.intel.geo import vessel_category  # noqa: PLC0415
+
+    out: list[_Candidate] = []
+    for f in features:
+        ll = feature_lonlat(f)
+        if ll is None:
+            continue
+        p = f.get("properties") or {}
+        if vessel_category(p.get("shipType")) != "military":
+            continue
+        mmsi = p.get("mmsi") or f.get("id")
+        ident = p.get("name") or mmsi or "?"
+        eid = f"vessel:{mmsi}" if mmsi else f"vessel:{ident}"
+        out.append(
+            _Candidate(eid, "military_vessel", ll[0], ll[1], 3,
+                       f"military vessel {ident}", {"mmsi": mmsi})
+        )
+    return out
+
+
 def candidates_from_brief(brief_result: dict[str, Any]) -> list[_Candidate]:
     """Incident-class signals from the fused brief.
 
@@ -230,6 +265,52 @@ def candidates_from_brief(brief_result: dict[str, Any]) -> list[_Candidate]:
             # them to a 'fire' watch (the brief doesn't separate fire vs event).
             out.append(_Candidate(iid, "fire", float(lon), float(lat), rank,
                                   narrative, {"domains": sorted(domains)}))
+    return out
+
+
+def candidates_from_tracks(
+    tracks: list[dict[str, Any]],
+    now: float,
+    *,
+    gap_seconds: float = 1800.0,
+    rendezvous_nm: float = 0.5,
+    loiter_radius_nm: float = 0.5,
+    loiter_dwell_s: float = 1800.0,
+) -> list[_Candidate]:
+    """Behavioral candidates from the position-history store (Phase 2).
+
+    Global (AOI-agnostic) — ``evaluate_rules`` scopes each to a rule's AOI via
+    ``within_geofence``, exactly like the snapshot / brief candidates. Covers
+    ``ais_gap`` (transponder went dark), ``rendezvous`` (two vessels close), and
+    ``loiter`` (a vessel holding station). The detection math lives in
+    ``intel/detectors.py`` (unit-tested); this only adapts hits to ``_Candidate``.
+    """
+    from app.intel import detectors  # noqa: PLC0415
+
+    out: list[_Candidate] = []
+    for h in detectors.ais_gap(tracks, now=now, gap_seconds=gap_seconds):
+        mins = int(h["age_s"] // 60)
+        out.append(_Candidate(str(h["id"]), "ais_gap", h["lon"], h["lat"], 3,
+                              f"{h['id']} AIS-dark {mins} min", {"age_s": h["age_s"]}))
+
+    last_pos = {
+        str(t.get("id")): (t["points"][-1][0], t["points"][-1][1])
+        for t in tracks if t.get("points")
+    }
+    for h in detectors.proximity(tracks, max_nm=rendezvous_nm):
+        pos = last_pos.get(str(h["a"]))
+        if pos is None:
+            continue
+        out.append(_Candidate(str(h["a"]), "rendezvous", pos[0], pos[1], 3,
+                              f"rendezvous {h['a']} <-> {h['b']} ({h['nm']} nm)",
+                              {"partner": h["b"], "nm": h["nm"]}))
+
+    for t in tracks:
+        hit = detectors.loiter(t, radius_nm=loiter_radius_nm,
+                               dwell_seconds=loiter_dwell_s, now=now)
+        if hit:
+            out.append(_Candidate(str(hit["id"]), "loiter", hit["lon"], hit["lat"], 2,
+                                  f"{hit['id']} loitering", {"dwell_s": hit["dwell_s"]}))
     return out
 
 
@@ -291,17 +372,21 @@ def _alert_message(rule: dict[str, Any], cand: _Candidate, transition: str) -> s
     return f"{cand.summary} {verb} {label}"
 
 
-def _to_bus_alert(rule: dict[str, Any], cand: _Candidate, transition: str) -> Alert:
-    """Adapt a firing to the ``correlate.types.Alert`` the /ws/alerts bus pushes."""
-    sev_word = next(
+def _severity_word(rank: int) -> str:
+    """Map a 1..5 severity rank to the worded scale the alert UI groups by."""
+    return next(
         (w for w, r in (("critical", 5), ("high", 4), ("medium", 3), ("low", 1))
-         if cand.severity_rank >= r),
+         if rank >= r),
         "low",
     )
+
+
+def _to_bus_alert(rule: dict[str, Any], cand: _Candidate, transition: str) -> Alert:
+    """Adapt a firing to the ``correlate.types.Alert`` the /ws/alerts bus pushes."""
     return Alert(
         id=uuid.uuid4().hex[:12],
         rule_id=f"watch:{rule.get('id')}",
-        severity=sev_word,  # type: ignore[arg-type]
+        severity=_severity_word(cand.severity_rank),  # type: ignore[arg-type]
         t=time.time(),
         lon=cand.lon,
         lat=cand.lat,
@@ -348,6 +433,63 @@ def evaluate_rules(
                 _STATE.inside[key] = False
                 firings.append((r, cand, "exit"))
     return firings
+
+
+# ── LEVEL view: what is inside the AOIs RIGHT NOW (consistent across reloads) ────
+# The /ws/alerts stream is EDGE-triggered — it pushes a contact CROSSING into an
+# AOI, once. The "Standing detections" panel asks a LEVEL question instead: what is
+# present in my watch areas now? Answering it off the edge stream made the panel
+# flaky (it looked alive only right after a contact crossed in, or after a fresh
+# tab replayed the recent-edge backfill, then went quiet while contacts simply sat
+# inside). This recomputes the full qualifying-inside set from scratch each call —
+# no membership state, no edge dependency — so a contact sitting in an AOI shows on
+# EVERY poll. Same kind-scope + severity-floor matching as evaluate_rules, so edge
+# and level never disagree about WHAT matches.
+
+
+# The shared candidate set from the most recent sweep, cached so a level read
+# (``/api/alerts/standing``) reuses the picture the sweep already gathered instead
+# of re-fetching the snapshot/brief/vessels per request.
+_LAST_CANDIDATES: list[_Candidate] = []
+_CANDIDATES_TS: float = 0.0
+
+
+def current_candidates() -> list[_Candidate]:
+    return list(_LAST_CANDIDATES)
+
+
+def candidates_as_of() -> int:
+    return int(_CANDIDATES_TS)
+
+
+def standing_detections(
+    rules: list[dict[str, Any]], candidates: list[_Candidate]
+) -> list[dict[str, Any]]:
+    """Every qualifying contact currently inside an enabled rule's AOI (level)."""
+    out: list[dict[str, Any]] = []
+    for r in rules:
+        if not r.get("enabled", True):
+            continue
+        want = set(r.get("kinds") or [])  # empty → match any kind
+        for cand in candidates:
+            if want and cand.kind not in want:
+                continue
+            if not _meets_severity(r, cand.severity_rank):
+                continue
+            if not within_geofence(r, cand.lon, cand.lat):
+                continue
+            out.append({
+                "rule_id": r.get("id"),
+                "rule_label": r.get("label"),
+                "kind": cand.kind,
+                "entity_id": cand.entity_id,
+                "severity": cand.severity_rank,
+                "severity_word": _severity_word(cand.severity_rank),
+                "summary": cand.summary,
+                "lon": round(cand.lon, 4),
+                "lat": round(cand.lat, 4),
+            })
+    return out
 
 
 # ── persistence (per-session, RLS-scoped) ───────────────────────────────────────
@@ -421,6 +563,7 @@ async def evaluate_session(
     fired = 0
     for rule, cand, transition in firings:
         await _persist_firing(reg, rule, cand, transition)
+        await _maybe_cue(reg, rule, cand, transition)
         # Reuse the EXISTING /ws/alerts transport: publish onto the bus the live
         # socket already broadcasts. Enters and exits both notify.
         try:
@@ -429,6 +572,25 @@ async def evaluate_session(
             pass
         fired += 1
     return fired
+
+
+async def _maybe_cue(
+    reg: OntologyRegistry, rule: dict[str, Any], cand: _Candidate, transition: str
+) -> None:
+    """Tip-and-cue: a dark-zone ENTER triggers an open-source SAR look, and the
+    result is attached to the alert object (``props.cue``). Best-effort — a cue
+    failure (e.g. missing CDSE creds) is recorded as a status, never raised."""
+    from app.intel import cue  # noqa: PLC0415
+
+    if transition != "enter" or cand.kind not in cue.CUE_KINDS:
+        return
+    try:
+        result = await cue.run(cand.lon, cand.lat)
+        obj = alert_object(rule, cand, transition, _now_iso())
+        obj.props["cue"] = result
+        await reg.upsert(obj)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("watch: cue failed (%s): %s", cand.entity_id, exc)
 
 
 async def evaluate_all() -> int:
@@ -455,6 +617,35 @@ async def evaluate_all() -> int:
         brief_result = {"incidents": []}
 
     candidates = candidates_from_snapshot(features) + candidates_from_brief(brief_result)
+
+    # Military surface vessels from the warm AIS snapshot (read, don't fetch — the
+    # maritime layer already keeps this store hot). Wrapped so an AIS hiccup never
+    # stalls the sweep.
+    try:
+        from app.routes import maritime  # noqa: PLC0415
+
+        vfeats = list(maritime.vessel_snapshot().get("features") or [])
+        candidates += candidates_from_vessels(vfeats)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Phase 2: behavioral candidates from the position-history store (ais_gap /
+    # rendezvous / loiter). Wrapped so a history hiccup never stalls the sweep.
+    from app import history  # noqa: PLC0415
+
+    try:
+        now = time.time()
+        tr = await history.query_tracks(
+            "vessel", None, now - 6 * 3600, now + 1, limit_ids=3000, max_points_per_id=200
+        )
+        candidates += candidates_from_tracks(tr.get("tracks") or [], now)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Cache the assembled picture so a level read (/api/alerts/standing) reuses it.
+    global _LAST_CANDIDATES, _CANDIDATES_TS
+    _LAST_CANDIDATES = candidates
+    _CANDIDATES_TS = time.time()
 
     s = get_settings()
     total = 0

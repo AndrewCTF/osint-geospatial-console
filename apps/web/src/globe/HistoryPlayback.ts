@@ -164,7 +164,8 @@ export function installHistoryPlayback(viewer: Cesium.Viewer): PlaybackControlle
             backgroundPadding: new Cesium.Cartesian2(5, 3),
             pixelOffset: new Cesium.Cartesian2(0, -10),
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            // Depth-tested so the globe occludes a far-side dwell label rather
+            // than bleeding it through the opposite hemisphere.
           },
         });
       }

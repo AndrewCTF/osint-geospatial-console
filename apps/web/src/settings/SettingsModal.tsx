@@ -4,6 +4,8 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../transport/http.js';
 import { KeysPanel } from './KeysPanel.js';
+import { useDashboardMode, type DashboardMode } from '../state/dashboardMode.js';
+import { useSettings } from '../state/settings.js';
 
 interface Me {
   email?: string;
@@ -81,6 +83,21 @@ export function SettingsModal({ onClose }: { onClose: () => void }): JSX.Element
           )}
 
           <div className="mono text-[9px] uppercase tracking-[0.7px] text-txt-3 mb-2">
+            Dashboard
+          </div>
+          <DashboardToggle />
+
+          <div className="mono text-[9px] uppercase tracking-[0.7px] text-txt-3 mb-2 mt-4">
+            Aircraft motion
+          </div>
+          <DeadReckonToggle />
+
+          <div className="mono text-[9px] uppercase tracking-[0.7px] text-txt-3 mb-2 mt-4">
+            Display
+          </div>
+          <RenderQualitySlider />
+
+          <div className="mono text-[9px] uppercase tracking-[0.7px] text-txt-3 mb-2 mt-4">
             API keys · bring your own
           </div>
           <KeysPanel />
@@ -92,6 +109,114 @@ export function SettingsModal({ onClose }: { onClose: () => void }): JSX.Element
             Open full dashboard — limits, billing & alerts →
           </a>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Switch between the new approachable "Normal" dashboard (default) and the dense
+// "Professional" COP. Persisted via the dashboardMode store; the "/" route
+// re-renders into the chosen shell. The map/globe is identical between them.
+function DashboardToggle(): JSX.Element {
+  const mode = useDashboardMode((s) => s.mode);
+  const setMode = useDashboardMode((s) => s.setMode);
+  const opts: { id: DashboardMode; label: string; hint: string }[] = [
+    { id: 'professional', label: 'Professional', hint: 'Dense, full-tool COP (default)' },
+    { id: 'normal', label: 'Normal', hint: 'Clean, guided layout' },
+  ];
+  return (
+    <div className="flex gap-1.5" role="radiogroup" aria-label="Dashboard layout">
+      {opts.map((o) => {
+        const on = mode === o.id;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => setMode(o.id)}
+            className={`flex-1 text-left rounded-sm border px-2.5 py-2 transition-colors ${
+              on
+                ? 'border-accent-line bg-accent-dim text-txt-0'
+                : 'border-line text-txt-2 hover:border-accent-line hover:text-txt-1'
+            }`}
+          >
+            <div className="mono text-[11px] font-medium">{o.label}</div>
+            <div className="mono text-[9px] text-txt-3 mt-0.5">{o.hint}</div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// FlightRadar24-style dead-reckoning toggle. OFF by default — the map shows real
+// ADS-B fixes only. When ON, aircraft glide forward along their last reported
+// track/speed BETWEEN fixes; those positions are ESTIMATED (a map badge says
+// so). Operator-sanctioned opt-in (2026-06-28) over the real-fix-only guardrail.
+function DeadReckonToggle(): JSX.Element {
+  const on = useSettings((s) => s.aircraftDeadReckon);
+  const set = useSettings((s) => s.set);
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={() => set('aircraftDeadReckon', !on)}
+      className={`w-full text-left rounded-sm border px-2.5 py-2 transition-colors ${
+        on
+          ? 'border-accent-line bg-accent-dim text-txt-0'
+          : 'border-line text-txt-2 hover:border-accent-line hover:text-txt-1'
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="mono text-[11px] font-medium">Keep planes moving between updates</span>
+        <span
+          className={`mono text-[10px] px-1.5 py-0.5 rounded-sm border ${
+            on ? 'border-accent-line text-accent' : 'border-line text-txt-3'
+          }`}
+        >
+          {on ? 'ON' : 'OFF'}
+        </span>
+      </div>
+      <div className="mono text-[9px] text-txt-3 mt-1 leading-snug">
+        FlightRadar24-style: glide aircraft along their last heading &amp; speed between
+        ADS-B fixes. Positions shown are <span className="text-accent">estimated</span>, not
+        observed. Off by default.
+      </div>
+    </button>
+  );
+}
+
+// Globe render resolution ↔ FPS. The 3D scene renders its drawing buffer at
+// css_pixels × min(devicePixelRatio, cap). 2.0 = native sharp on a 2× / Retina /
+// 200%-scaled display; lower trades sharpness for frame rate (fewer pixels to
+// fill). Applied live (GlobeCanvas subscribes to the setting).
+function RenderQualitySlider(): JSX.Element {
+  const cap = useSettings((s) => s.renderPixelCap);
+  const set = useSettings((s) => s.set);
+  const label = cap >= 1.95 ? 'Sharp (native)' : cap <= 1.05 ? 'Fastest' : 'Balanced';
+  return (
+    <div className="w-full rounded-sm border border-line px-2.5 py-2">
+      <div className="flex items-center justify-between">
+        <span className="mono text-[11px] font-medium text-txt-1">Globe render quality</span>
+        <span className="mono text-[10px] px-1.5 py-0.5 rounded-sm border border-accent-line text-accent">
+          {label} · {cap.toFixed(2)}×
+        </span>
+      </div>
+      <input
+        type="range"
+        min={1}
+        max={3}
+        step={0.25}
+        value={cap}
+        aria-label="Globe render quality (resolution vs FPS)"
+        onChange={(e) => set('renderPixelCap', Number(e.target.value))}
+        className="w-full mt-2 accent-accent"
+      />
+      <div className="mono text-[9px] text-txt-3 mt-1 leading-snug">
+        Higher = sharper (renders at native device pixels); lower = higher FPS (fewer
+        pixels). Resolution and frame rate trade off directly. Default 2.0×.
       </div>
     </div>
   );

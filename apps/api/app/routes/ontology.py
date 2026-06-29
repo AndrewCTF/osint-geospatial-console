@@ -21,7 +21,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from typing import Any
+
 from app.config import get_settings
+from app.intel import graph_analytics
 from app.intel.ontology import (
     Object,
     OntologyRegistry,
@@ -83,6 +86,29 @@ async def search_around(
     """
     reg = OntologyRegistry(ctx, get_settings())
     return await reg.traverse(object_id, depth=depth)
+
+
+@router.get("/api/ontology/analytics/{object_id:path}")
+async def graph_analytics_route(
+    object_id: str,
+    depth: int = Query(2, ge=1, le=3),
+    ctx: UserCtx = Depends(current_user),
+) -> dict[str, Any]:
+    """Link-analysis metrics over the ``object_id`` neighbourhood (Phase 3).
+
+    Expands the search-around graph to ``depth`` hops, then computes degree +
+    betweenness centrality, connected-component communities, and a ranked
+    ``key_nodes`` list (the most central actors — whose removal most fragments the
+    network). This is the "who are the important nodes" question Gotham's graph
+    explorer answers; ``search-around`` shows the graph, this scores it.
+    """
+    reg = OntologyRegistry(ctx, get_settings())
+    sa = await reg.traverse(object_id, depth=depth)
+    node_ids, edges = graph_analytics.from_search_around(sa)
+    result = graph_analytics.analyze(node_ids, edges)
+    result["center"] = object_id
+    result["depth"] = depth
+    return result
 
 
 @router.get("/api/ontology/path", response_model=PathResult)

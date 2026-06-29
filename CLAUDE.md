@@ -44,11 +44,21 @@ not regress any of them. If unsure, leave the relevant code path alone.
   ADS-B truth instantly. The operator explicitly chose this over the prior glide,
   with full knowledge it had been rejected twice before (see memory
   `adsb-motion-glide-to-fix`). Do NOT "fix the jump" back to a glide.
-- **NEVER synthesize/predict aircraft motion — real observed fixes only.** Teleport
-  shows ONLY real fixes; do NOT add interpolation, forward-extrapolation, or
-  dead-reckoning to "smooth" it — that re-introduces the fake motion the operator
-  rejected. The glide model (`upsertAircraftSamples`) was REMOVED in the teleport
-  change; reverting to glide is a `git` revert, not a rewrite. VESSELS still glide
+- **NEVER synthesize/predict aircraft motion BY DEFAULT — real observed fixes only.**
+  Teleport shows ONLY real fixes; do NOT add interpolation, forward-extrapolation, or
+  dead-reckoning to "smooth" it ON THE DEFAULT PATH — that re-introduces the fake
+  motion the operator rejected. The glide model (`upsertAircraftSamples`) was REMOVED
+  in the teleport change; reverting to glide is a `git` revert, not a rewrite.
+- **SANCTIONED EXCEPTION — opt-in dead-reckoning (operator request 2026-06-28).** There
+  is now a settings toggle "Keep planes moving between updates" (`aircraftDeadReckon`
+  in `apps/web/src/state/settings.ts`, **OFF by default**). When the operator turns it
+  ON, `PollGeoJsonAdapter` replaces the teleport with `deadReckonPosition` — a
+  FlightRadar24-style forward-projected glide along the last `track_deg` at the last
+  `velocity_ms`, capped at `DEAD_RECKON_HORIZON_S` then HOLD. Positions while ON are
+  ESTIMATED, surfaced by the `PredictedMotionBadge` on the map. This is INTENTIONAL and
+  operator-approved with full knowledge of the rejections above — do NOT delete it as a
+  "synthesis regression". The DEFAULT (toggle off) still teleports to real fixes only.
+- VESSELS still glide
   via `SampledPositionProperty` + `LinearApproximation` (slow movers) — do not
   change that. Aircraft smoothness, if ever wanted again, comes from delivering
   REAL fixes faster + steadier (backend cadence, feed freshness), never from
@@ -78,7 +88,7 @@ not regress any of them. If unsure, leave the relevant code path alone.
 ### Refresh cadence
 
 - ADS-B global: 1 s frontend poll (`registry/defaults.ts` `ttlSec: 1`), backend
-  sticky snapshot on a 2 s target cycle (`_SNAPSHOT_TARGET_CYCLE_S`), and each
+  sticky snapshot on a 1.0 s target cycle (`_SNAPSHOT_TARGET_CYCLE_S`), and each
   fan-out is wall-clock-capped at 10 s (`_FANOUT_BUDGET_S`). The 1 s poll is
   cheap (the hot route serves the sticky snapshot in microseconds); motion
   between polls is interpolated + rendered every frame. Do not raise the poll
@@ -100,8 +110,8 @@ not regress any of them. If unsure, leave the relevant code path alone.
   Guarded by `tests/test_adsb_hot_blob.py`.
 - **`/ws/adsb` push is the PRIMARY live transport.** The refresher fans `_HOT_BLOB` to
   all subscribers (`_broadcast_blob`, per-send timeout + drop-on-error) each cycle, so
-  the client cadence is server-timed (~2 s, no request round-trip in the loop — measured
-  steady 1.9–2.1 s vs the old jitter). `require_ws_key` BEFORE `accept`; sends the blob
+  the client cadence is server-timed (~1.0 s, no request round-trip in the loop — steady,
+  no per-request jitter). `require_ws_key` BEFORE `accept`; sends the blob
   on connect for instant first paint. The browser inflates the binary frame with
   `DecompressionStream('gzip')` → `render()` (same upsert/glide owner as the poll). The
   HTTP poll is the FALLBACK (socket down) + the zoomed bbox path; `PollGeoJsonAdapter`

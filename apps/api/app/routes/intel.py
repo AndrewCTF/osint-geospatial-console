@@ -29,6 +29,7 @@ from app.intel.baseline import baseline_store
 from app.intel.geo import BBox, bbox_from_radius
 from app.intel.incident_store import incident_store
 from app.keys import UserCtx, current_user
+from app.security import current_principal
 
 router = APIRouter(tags=["intel"])
 
@@ -418,12 +419,22 @@ async def intel_agent(
     except HTTPException:
         ctx = None
 
+    # Need-to-know: the agent redacts every read-tool result to the reader's
+    # clearance/compartments. Resolve them least-privilege — a keyless/token-less
+    # run (ctx is None) is pinned at clearance 0 / no compartments, NOT full read.
+    # No try/except that elevates: current_principal already degrades to clearance
+    # 0 when the profile is unreachable.
+    clearance, compartments = 0, ()
+    if ctx is not None:
+        principal = await current_principal(request, ctx)
+        clearance, compartments = principal.clearance, principal.compartments
+
     async def gen() -> Any:
         try:
             # The serializer forwards EVERY event verbatim (no event-type
             # whitelist), so the new action/app_var/clarification frames reach
             # the client with no extra plumbing.
-            async for ev in agent.run_agent(q, bbox, ctx):
+            async for ev in agent.run_agent(q, bbox, ctx, clearance, compartments):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as exc:  # noqa: BLE001
             err = {"type": "error", "text": f"{type(exc).__name__}: {exc}"}
@@ -571,6 +582,87 @@ async def intel_vessel_dossier(mmsi: str) -> dict[str, Any]:
 async def intel_aircraft_dossier(ident: str) -> dict[str, Any]:
     """Pattern-of-life dossier for one aircraft (ICAO24 hex or callsign)."""
     return await dossier.aircraft_dossier(ident)
+
+
+# ── grounded dossier narrative (the Gotham "Dossier" prose) ──────────────────────
+# Turns the DETERMINISTIC dossier dict into a short analytic narrative via the
+# reasoning model. Hard anti-hallucination contract: the model reasons ONLY over
+# the facts handed in, every claim cites the field it came from, and the output is
+# labelled an ASSESSMENT (never asserted fact). Degrades to ok:false when no model
+# is wired — it never invents a story.
+
+_NARRATIVE_SYSTEM = (
+    "You are an intelligence analyst writing a SHORT pattern-of-life assessment. "
+    "You are given a deterministic dossier (observed track stats, AIS/ADS-B gaps, "
+    "speed profile, coverage, recent incident ids, identity attributes, source "
+    "freshness) for one tracked entity. Reason ONLY over the facts provided. Every "
+    "claim MUST reference a field from the input. Do NOT invent vessel/aircraft "
+    "names, ports, destinations, dates, counts, intentions, or events not present "
+    "in the data. This is an ANALYTIC ASSESSMENT, not a stated fact; hedge "
+    "accordingly and produce no operational detail.\n\n"
+    "Return STRICT JSON and nothing else:\n"
+    "{\n"
+    '  "assessment": "2-4 sentence analytic narrative",\n'
+    '  "observations": [{"claim": str, "grounded_in": "<the exact input field>"}],\n'
+    '  "confidence": "low|medium|high",\n'
+    '  "caveats": [str]\n'
+    "}\n"
+    "If the dossier is too thin to assess (almost no track), say so in one sentence "
+    "and return an empty observations list — do NOT fill the gap with a story."
+)
+
+# (entity_id) → (expires_epoch, payload). The dossier moves slowly; a ~10 min TTL
+# keeps the reason-tier cost off repeat selections without staleness mattering.
+_NARRATIVE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_NARRATIVE_TTL_S = 600.0
+
+
+@router.post("/api/intel/dossier/narrative")
+async def intel_dossier_narrative(entity_id: str = Query(...)) -> dict[str, Any]:
+    """Grounded analytic narrative for one entity (``vessel:<mmsi>``/``aircraft:<id>``).
+
+    Builds the deterministic dossier, then asks the reasoning model to narrate it
+    under a strict grounding prompt. On-demand only (the frontend gates it behind a
+    button), cached ~10 min. ``ok:false`` when no model is configured — never a fake.
+    """
+    now = time.time()
+    cached = _NARRATIVE_CACHE.get(entity_id)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    prefix, _, raw_id = entity_id.partition(":")
+    bare = raw_id or entity_id
+    if prefix == "aircraft":
+        doss = await dossier.aircraft_dossier(bare)
+    elif prefix == "vessel":
+        doss = await dossier.vessel_dossier(bare)
+    else:
+        return {"ok": False, "error": "entity_id must be vessel:<mmsi> or aircraft:<id>"}
+
+    # Trim the full track array out of the prompt (keep its size, not 1000s of fixes)
+    # — the stats already summarise it and a long array just burns tokens.
+    facts = {k: v for k, v in doss.items() if k != "track"}
+    facts["track_points"] = len(doss.get("track") or [])
+    user = "Dossier:\n" + json.dumps(facts, default=str)[:6000]
+
+    parsed, res = await llm.chat_json(
+        [
+            {"role": "system", "content": _NARRATIVE_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        tier="reason",
+        temperature=0.2,
+        max_tokens=900,
+    )
+    if not res.ok or not isinstance(parsed, dict):
+        return {
+            "ok": False,
+            "error": res.error or "model unavailable",
+            "model": res.model,
+        }
+    payload = {"ok": True, "model": res.model, "backend": res.backend, **parsed}
+    _NARRATIVE_CACHE[entity_id] = (now + _NARRATIVE_TTL_S, payload)
+    return payload
 
 
 @router.get("/api/intel/pol/{entity_id:path}")

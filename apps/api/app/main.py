@@ -23,10 +23,12 @@ from app.routes import alert_rules as alert_rules_routes
 from app.routes import alerts as alerts_routes
 from app.routes import audit as audit_routes
 from app.routes import aviation as aviation_routes
+from app.routes import acars as acars_routes
 from app.routes import cables as cables_routes
 from app.routes import cams as cams_routes
 from app.routes import collab as collab_routes
 from app.routes import config as config_routes
+from app.routes import conflict as conflict_routes
 from app.routes import correlations as correlations_routes
 from app.routes import cyber as cyber_routes
 from app.routes import entity as entity_routes
@@ -36,6 +38,7 @@ from app.routes import extract as extract_routes
 from app.routes import export as export_routes
 from app.routes import firms as firms_routes
 from app.routes import geocode as geocode_routes
+from app.routes import ground as ground_routes
 from app.routes import health as health_routes
 from app.routes import history as history_routes
 from app.routes import imagery as imagery_routes
@@ -47,6 +50,7 @@ from app.routes import maritime as maritime_routes
 from app.routes import news as news_routes_mod
 from app.routes import ontology as ontology_routes
 from app.routes import recon as recon_routes
+from app.routes import route as route_routes
 from app.routes import sar as sar_routes
 from app.routes import search as search_routes
 from app.routes import seismic as seismic_routes
@@ -96,6 +100,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await mcp_cm.__aenter__()
     try:
         if background:
+            # Headless-browser tar1090 sidecar: a real Chromium clears the
+            # Cloudflare 403 that blocks server httpx from airplanes.live and
+            # reads its g.planesOrdered store (~13k @ ~0.4s) served on localhost.
+            # ADSB_FEED_URLS points the snapshot at it. Start BEFORE the snapshot
+            # warm so the first hot cycle already folds in sidecar coverage.
+            # Best-effort: a missing node/chrome just logs + the backend serves
+            # without the extra feed. Torn down in the finally block.
+            from app import adsb_sidecar  # noqa: PLC0415
+
+            await adsb_sidecar.start()
+            # AIS twin: a second headless Chromium clears VesselFinder's
+            # Cloudflare gate and serves ~21k vessels worldwide as localhost
+            # vessels.json (the only keyless GLOBAL AIS). Spawn it here; the
+            # keyless AIS poller (ais_keyless.start() below) pulls + republishes
+            # it into the vessel store. Returns fast — does NOT block on the first
+            # world-grid scrape. Torn down in the finally block.
+            from app import ais_sidecar  # noqa: PLC0415
+
+            await ais_sidecar.start()
             correlate_runner.start()
             # ADS-B sticky snapshot: start the background refresher at BOOT so the
             # snapshot (and the pre-gzipped world-view blob the hot route + /ws/adsb
@@ -217,6 +240,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await history.stop()
             await watch_eval.stop()
             await news_routes.stop_refresher()
+            # Tear down the headless-browser tar1090 sidecar (kill the whole
+            # browser process group). No-op if it never started / already gone.
+            from app import adsb_sidecar  # noqa: PLC0415
+
+            await adsb_sidecar.stop()
+            # Tear down the VesselFinder AIS sidecar (its own browser tree).
+            from app import ais_sidecar  # noqa: PLC0415
+
+            await ais_sidecar.stop()
 
 
 def create_app() -> FastAPI:
@@ -265,6 +297,10 @@ def create_app() -> FastAPI:
     app.include_router(maritime_routes.router)
     app.include_router(jamming_routes.router)
     app.include_router(cams_routes.router)
+    # Ground-level (street-view-style) imagery union: Panoramax + KartaView
+    # (keyless, open) + a CORS image proxy so the desktop detection canvas can
+    # read pixels. See app/intel/ground.py for honest coverage caveats.
+    app.include_router(ground_routes.router)
     app.include_router(intel_routes.router)
     app.include_router(news_routes_mod.router)
     app.include_router(history_routes.router)
@@ -276,6 +312,8 @@ def create_app() -> FastAPI:
     # Local 3DGS reconstruction jobs (Studio): images/video → COLMAP → gsplat →
     # .ply, on the box's GPU. SSE progress; keyless local passes through.
     app.include_router(recon_routes.router)
+    app.include_router(route_routes.router)
+    app.include_router(conflict_routes.router)
     app.include_router(simulation_routes.router)
     # Typed ontology spine (read) + governed write-back actions — the semantic
     # layer the kanban, alerts, and agent compose on (Track A1/C1).
@@ -290,6 +328,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_routes.router)
     app.include_router(extract_routes.router)
     app.include_router(collab_routes.router)
+    app.include_router(acars_routes.router)
 
     # TiTiler COG sub-app (Track B2): XYZ tiles for any Cloud-Optimized GeoTIFF
     # (Maxar Open Data S3, future SAR delivery), so B3/B4/B5 have a universal

@@ -43,7 +43,8 @@ export function installWatchboxes(viewer: Cesium.Viewer): () => void {
         backgroundPadding: new Cesium.Cartesian2(5, 3),
         pixelOffset: new Cesium.Cartesian2(0, -8),
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        // Depth-tested so the globe occludes a far-side watchbox label rather
+        // than bleeding it through the opposite hemisphere.
       },
     });
   };

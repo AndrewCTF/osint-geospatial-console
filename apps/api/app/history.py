@@ -42,6 +42,10 @@ _rows_written: int = 0
 _flush_task: asyncio.Task[None] | None = None
 _db_path: str | None = None          # resolved at start(); overridable in tests
 _db_path_override: str | None = None  # set by tests via override_db_path()
+# Phase 1: vessels we've already run through entity resolution this process, so
+# the resolver fires once per distinct vessel (on first sight) — not every poll.
+_resolved_seen: set[str] = set()
+_RESOLVE_SEEN_MAX: int = 200_000
 
 
 # ── DB path injection (for tests) ─────────────────────────────────────────────
@@ -185,8 +189,35 @@ def ingest_vessels(rows: list[dict[str, Any]]) -> None:
             }
             t = float(row.get("timestamp") or now)
             _buffer_point("vessel", entity_id, t, lon, lat, track, extra)
+            _resolve_vessel(entity_id, row)
         except Exception:  # noqa: BLE001
             continue
+
+
+def _resolve_vessel(entity_id: str, row: dict[str, Any]) -> None:
+    """Best-effort entity resolution on first sight of a vessel (Phase 1).
+
+    Builds the alias graph (mmsi/imo/name/callsign → one canonical identity) so a
+    vessel observed under multiple MMSIs becomes ONE object. Throttled by a
+    process-lifetime seen-set so steady-state cost is ~0, and never raises — a
+    resolver hiccup must not drop a position fix.
+    """
+    if entity_id in _resolved_seen:
+        return
+    try:
+        from app.intel import resolve  # lazy: avoid import cost at module load
+
+        ids: dict[str, Any] = {"mmsi": row.get("mmsi") or entity_id.split(":", 1)[-1]}
+        for src_key, dst_key in (("imo", "imo"), ("name", "name"),
+                                 ("ship_name", "name"), ("callsign", "callsign")):
+            val = row.get(src_key)
+            if val:
+                ids.setdefault(dst_key, val)
+        resolve.resolve("vessel", ids)
+        if len(_resolved_seen) < _RESOLVE_SEEN_MAX:
+            _resolved_seen.add(entity_id)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── flush (runs in executor so it doesn't block the event loop) ───────────────

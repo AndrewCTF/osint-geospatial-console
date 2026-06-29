@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import type { TabDef } from './TabbedPanel.js';
 import { ErrorBoundary } from './ErrorBoundary.js';
 import { useIsMobile } from './useIsMobile.js';
@@ -21,9 +21,66 @@ interface Props {
   bottom: ReactNode;
   leftTabs?: TabDef[];
   rightTabs?: TabDef[];
+  // Floating overlay docked to the LEFT edge of the globe band (just inside the
+  // left rail, below the map-health strip). Rail-aware like MapHealthStrip so it
+  // tracks a resized left rail. Used by the contextual selection action ribbon.
+  overlayLeft?: ReactNode;
 }
 
 const RAIL_BG = 'rgba(8,10,15,0.95)';
+
+// Resizable rails — widths persist to localStorage, clamped to sane bounds.
+const LS_LEFT = 'csl.leftW';
+const LS_RIGHT = 'csl.rightW';
+const LEFT_MIN = 220;
+const LEFT_MAX = 620;
+const RIGHT_MIN = 260;
+const RIGHT_MAX = 680;
+const clampN = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n));
+function readW(key: string, def: number): number {
+  try {
+    const v = Number(localStorage.getItem(key));
+    return Number.isFinite(v) && v > 0 ? v : def;
+  } catch {
+    return def;
+  }
+}
+
+// Thin draggable edge on a rail's INNER border. Drag updates the width live; the
+// listeners attach to window so the drag survives the cursor leaving the handle.
+function RailResizer({
+  side,
+  set,
+}: {
+  side: 'left' | 'right';
+  set: (w: number) => void;
+}): JSX.Element {
+  const onDown = (e: ReactPointerEvent): void => {
+    e.preventDefault();
+    const move = (ev: PointerEvent): void => {
+      const raw = side === 'left' ? ev.clientX : window.innerWidth - ev.clientX;
+      set(clampN(raw, side === 'left' ? LEFT_MIN : RIGHT_MIN, side === 'left' ? LEFT_MAX : RIGHT_MAX));
+    };
+    const up = (): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.style.userSelect = '';
+    };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  return (
+    <div
+      onPointerDown={onDown}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${side} panel`}
+      title="Drag to resize"
+      className={`absolute top-0 bottom-0 ${side === 'left' ? 'right-0' : 'left-0'} w-[5px] cursor-col-resize z-30 hover:bg-accent-line/50 active:bg-accent-line/70`}
+    />
+  );
+}
 
 export function ConsoleShell({
   top,
@@ -33,11 +90,28 @@ export function ConsoleShell({
   bottom,
   leftTabs,
   rightTabs,
+  overlayLeft,
 }: Props): JSX.Element {
   const isMobile = useIsMobile();
   const sim = useSim((s) => s.active);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [leftW, setLeftW] = useState(() => clampN(readW(LS_LEFT, 296), LEFT_MIN, LEFT_MAX));
+  const [rightW, setRightW] = useState(() => clampN(readW(LS_RIGHT, 360), RIGHT_MIN, RIGHT_MAX));
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_LEFT, String(leftW));
+    } catch {
+      /* ignore */
+    }
+  }, [leftW]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_RIGHT, String(rightW));
+    } catch {
+      /* ignore */
+    }
+  }, [rightW]);
 
   const timelinePanel: TabDef = { id: 'timeline', label: 'Timeline', content: bottom };
   const mobilePanels: TabDef[] =
@@ -53,7 +127,7 @@ export function ConsoleShell({
   return (
     <div
       className="csl h-screen w-screen overflow-hidden bg-bg-0 text-txt-0 grid"
-      style={{ gridTemplateRows: isMobile ? '18px 42px 1fr' : '18px 42px 1fr 158px' }}
+      style={{ gridTemplateRows: isMobile ? '26px 42px 1fr' : '26px 42px 1fr 158px' }}
     >
       {/* Persistent classification banner — top chrome (Gotham COP convention).
           UNCLASSIFIED (open sources); amber EXERCISE strip while the war-sim runs. */}
@@ -87,30 +161,42 @@ export function ConsoleShell({
             wrapper + pointer-events-auto pill so it never blocks globe drag.
             On desktop it floats between the rails (left 296 / right 336). */}
         <div
-          className={`absolute top-1.5 z-[15] flex justify-center pointer-events-none ${
-            isMobile ? 'inset-x-2' : 'left-[306px] right-[346px]'
-          }`}
+          className={`absolute top-1.5 z-[15] flex justify-center pointer-events-none ${isMobile ? 'inset-x-2' : ''}`}
+          style={isMobile ? undefined : { left: leftW + 10, right: rightW + 10 }}
         >
           <MapHealthStrip />
         </div>
+
+        {/* contextual overlay (selection action ribbon) — docked left of the
+            globe band, below the health strip, rail-aware so it tracks resize. */}
+        {overlayLeft && (
+          <div
+            className="absolute z-[16] pointer-events-none"
+            style={{ left: isMobile ? 8 : leftW + 10, top: 34 }}
+          >
+            {overlayLeft}
+          </div>
+        )}
 
         {/* ───────────────── desktop rails ───────────────── */}
         {!isMobile && (
           <>
             <aside
-              className="absolute left-0 top-0 bottom-0 w-[296px] border-r border-line-2 overflow-hidden z-20 flex flex-col"
+              className="absolute left-0 top-0 bottom-0 border-r border-line-2 overflow-hidden z-20 flex flex-col"
               aria-label="Layers"
-              style={{ background: RAIL_BG }}
+              style={{ background: RAIL_BG, width: leftW }}
             >
               {left}
+              <RailResizer side="left" set={setLeftW} />
             </aside>
             {right && (
               <aside
-                className="absolute right-0 top-0 bottom-0 w-[360px] border-l border-line-2 overflow-hidden z-20 flex flex-col"
+                className="absolute right-0 top-0 bottom-0 border-l border-line-2 overflow-hidden z-20 flex flex-col"
                 aria-label="Selection"
-                style={{ background: RAIL_BG }}
+                style={{ background: RAIL_BG, width: rightW }}
               >
                 {right}
+                <RailResizer side="right" set={setRightW} />
               </aside>
             )}
           </>

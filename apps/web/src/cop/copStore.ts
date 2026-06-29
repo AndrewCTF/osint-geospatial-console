@@ -110,7 +110,11 @@ interface CopState extends CopSnapshot {
 }
 
 export const useCop = create<CopState>((set) => ({
-  ...seed(),
+  // Start EMPTY — the COP is the analyst's own picture, not a pre-loaded demo.
+  // The notional Poland laydown is opt-in via reset() ("Load example").
+  units: [],
+  lines: [],
+  rings: [],
   addUnit: (u) => {
     const id = uid('u');
     set((s) => ({ units: [...s.units, { ...u, id }] }));

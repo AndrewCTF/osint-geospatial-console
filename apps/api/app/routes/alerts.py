@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from app.auth import require_ws_key
+from app.config import get_settings
 from app.correlate.bus import bus, jamming_recent
 from app.intel import watch
 from app.intel.geo import NM_TO_KM, haversine_km
@@ -67,6 +68,31 @@ async def unregister_watch_session(
     """
     watch.unregister_session(ctx.user_id)
     return {"ok": True, "active_sessions": len(watch.active_sessions())}
+
+
+@router.get("/api/alerts/standing")
+async def standing_detections(
+    ctx: UserCtx = Depends(current_user),
+) -> dict[str, Any]:
+    """Current LEVEL view of the caller's standing detections.
+
+    ``/ws/alerts`` is EDGE-triggered: it pushes a contact CROSSING into a watch
+    area, once. The "Standing detections" panel asks the LEVEL question instead —
+    what is inside my enabled watch areas RIGHT NOW — which the edge stream can't
+    answer consistently (it looks alive only just after a crossing or a fresh tab's
+    recent-edge backfill, then goes quiet while contacts sit inside). This recomputes
+    the qualifying-inside set from the evaluator's most recent shared candidate set
+    against the caller's RLS-scoped rules, so the panel is stable across reloads,
+    reconnects, and backend restarts.
+    """
+    s = get_settings()
+    rules = await watch._list_enabled_rules(ctx, s)
+    dets = watch.standing_detections(rules, watch.current_candidates())
+    counts: dict[str, int] = {}
+    for d in dets:
+        w = d["severity_word"]
+        counts[w] = counts.get(w, 0) + 1
+    return {"detections": dets, "counts": counts, "as_of": watch.candidates_as_of()}
 
 
 @router.get("/api/jamming/alerts")

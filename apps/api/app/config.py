@@ -105,7 +105,19 @@ class Settings(BaseSettings):
     # use the slow interval; a localhost sidecar uses the fast one.
     adsb_feed_interval_s: float = 5.0  # full aircraft.json mirrors
     adsb_feed_slow_interval_s: float = 20.0  # /v2 + /re-api APIs (rate-limited)
-    adsb_feed_fast_interval_s: float = 2.0  # localhost sidecar (no limit)
+    adsb_feed_fast_interval_s: float = 1.0  # localhost sidecar (no limit)
+    # Sidecar-only mode. The headless-browser tar1090 sidecar (:8090, started by
+    # app.adsb_sidecar) runs REAL tar1090 against globe.airplanes.live +
+    # globe.adsbexchange and reads its decoded store — the only form of tar1090's
+    # direct method reachable from a datacenter IP (the binary re-api is
+    # Cloudflare-403, measured). It's the freshest + biggest single path
+    # (~18k aircraft, position age p50 ~0.4 s), so when this is on the snapshot is
+    # served from the sidecar ALONE: the remote readsb mirrors are dropped from the
+    # pull list (less event-loop load = fresher) and OpenSky/firehose/grid run only
+    # as an automatic backfill if the sidecar union ever falls below ~8000 (a
+    # Chromium crash) so the map can't go empty. Default off keeps the multi-tier
+    # union for deploys without a sidecar; the local .env sets ADSB_SIDECAR_ONLY=1.
+    adsb_sidecar_only: bool = False
 
     # ── infra ──
     database_url: str = "postgresql+asyncpg://osint:osint@localhost:5432/osint"
@@ -121,7 +133,11 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     log_level: str = "info"
-    cors_origins: str = "http://localhost:8080"
+    cors_origins: str = (
+        "http://localhost:8080,http://127.0.0.1:8080,"
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "tauri://localhost,http://tauri.localhost,https://tauri.localhost"
+    )
     # When set, REST + WS routes require X-API-Key matching this value.
     # When unset (default), no auth — fine for single-analyst localhost.
     api_key: str = ""
@@ -212,6 +228,30 @@ class Settings(BaseSettings):
     # 24h keeps anchored/slow reporters while cutting the multi-year dead. Set to
     # 0 to disable the filter and serve every last-known position.
     digitraffic_max_fix_age_s: float = 86400.0
+    # Keyless GLOBAL AIS via headless-browser sidecar (VesselFinder) — the AIS
+    # twin of the ADS-B globe sidecar. A real Chromium clears VesselFinder's
+    # Cloudflare gate, fetches its public /api/pub/mp2 vessel tiles across a world
+    # grid (the only thing the gate authorizes) and decodes the packed binary →
+    # ~21k vessels worldwide (measured 2026-06-29), served as vessels.json on
+    # localhost by tools/ais-vesselfinder-feeder. This is the FIRST keyless source
+    # with global vessel breadth; the REST feeds above are N-Europe regional. The
+    # ais_keyless poller pulls vessels.json and republishes each fix into the
+    # unified store + /ws/ais. Set enabled=False to skip the second headless tab.
+    ais_vesselfinder_sidecar_enabled: bool = True
+    ais_vesselfinder_sidecar_url: str = "http://127.0.0.1:8091/vessels.json"
+    ais_vesselfinder_sidecar_interval_s: float = 30.0
+
+    # MarineTraffic (PAID global AIS, key-gated). Dormant unless a key is set.
+    # `marinetraffic_url` is a template ({key} substituted) because the exact path
+    # depends on your MarineTraffic plan (area export / fleet positions). Polls into
+    # the same vessel store + /ws/ais as the keyless feeds. May be datacenter-IP
+    # restricted — probe reachability from the deployment host first.
+    marinetraffic_key: str = ""  # MARINETRAFFIC_KEY
+    marinetraffic_enabled: bool = True  # gate; only runs when a key is present
+    marinetraffic_interval_s: float = 120.0
+    marinetraffic_url: str = (
+        "https://services.marinetraffic.com/api/exportvessels/v:8/{key}/protocol:jsono"
+    )
 
     # ── Historical playback ──
     # Position history store for 3D replay/scrub. SQLite by default; safe to

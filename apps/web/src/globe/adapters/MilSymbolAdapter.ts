@@ -92,7 +92,8 @@ export class MilSymbolAdapter implements LayerAdapter {
           backgroundPadding: new Cesium.Cartesian2(5, 3),
           pixelOffset: new Cesium.Cartesian2(0, -8),
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          // Depth-tested: the globe OCCLUDES a far-side COP symbol/label rather
+          // than letting it bleed through to the opposite hemisphere.
           distanceDisplayCondition: ddc,
         },
       });
@@ -127,7 +128,8 @@ export class MilSymbolAdapter implements LayerAdapter {
           backgroundColor: Cesium.Color.fromCssColorString('#0c0e11').withAlpha(0.78),
           backgroundPadding: new Cesium.Cartesian2(6, 3),
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          // Depth-tested: the globe OCCLUDES a far-side COP symbol/label rather
+          // than letting it bleed through to the opposite hemisphere.
           distanceDisplayCondition: ddc,
         },
       });
@@ -147,7 +149,8 @@ export class MilSymbolAdapter implements LayerAdapter {
           // pin the icon's milsymbol anchor onto the position (offset is in
           // screen px = anchor × the fixed billboard scale).
           pixelOffset: new Cesium.Cartesian2(-anchor.x * SYMBOL_SCALE, -anchor.y * SYMBOL_SCALE),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          // Depth-tested: the globe OCCLUDES a far-side COP symbol/label rather
+          // than letting it bleed through to the opposite hemisphere.
           distanceDisplayCondition: ddc,
         },
       });

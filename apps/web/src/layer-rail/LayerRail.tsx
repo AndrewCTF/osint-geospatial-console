@@ -14,6 +14,7 @@ interface Props {
 // Gotham-style numbered folder labels. Each group maps to a display name;
 // the sequence number is derived from GROUP_ORDER position at render time.
 const GROUP_LABEL: Record<string, string> = {
+  conflict:  'Conflict',
   aviation:  'Aviation',
   maritime:  'Maritime',
   space:     'Space',
@@ -29,8 +30,9 @@ const GROUP_LABEL: Record<string, string> = {
   seismic:   'Seismic',
 };
 
-// Ordered as Gotham numbered groups: primary mission layers first.
+// Ordered as Gotham numbered groups: conflict + primary mission layers first.
 const GROUP_ORDER = [
+  'conflict',
   'aviation',
   'maritime',
   'space',
@@ -44,6 +46,28 @@ const GROUP_ORDER = [
   'imagery',
   'reference',
   'seismic',
+];
+
+// One-click mission presets — enable a curated layer set, disable the rest of
+// the named layers so the operator gets a clean picture for the task. Unknown
+// ids are ignored, so a preset stays valid as layers come and go.
+const PRESETS: { label: string; on: string[] }[] = [
+  {
+    label: 'Conflict Watch',
+    on: ['intel.incidents.live', 'cyber.ioda.outages', 'aviation.adsb.live.mil', 'news.acled.events'],
+  },
+  {
+    label: 'Air Picture',
+    on: ['aviation.adsb.global', 'aviation.adsb.live.mil', 'aviation.adsb.live.emergencies'],
+  },
+  {
+    label: 'Maritime',
+    on: ['maritime.keyless', 'maritime.sar.hormuz'],
+  },
+  {
+    label: 'Cyber',
+    on: ['cyber.ioda.outages', 'env.jamming.nacp'],
+  },
 ];
 
 // Status → colour class. Shared by the layer-row swatch (the only per-layer
@@ -64,6 +88,7 @@ export function LayerRail({ registry, viewer }: Props): JSX.Element {
   // owns its own setInterval so updating a single age label does NOT
   // re-render the entire rail (audit fix #4).
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [filter, setFilter] = useState('');
   const feeds = useFeeds((s) => s.feeds);
   const debugLoggedRef = useRef<boolean>(false);
 
@@ -157,10 +182,31 @@ export function LayerRail({ registry, viewer }: Props): JSX.Element {
     };
   }, [viewer]);
 
-  const grouped = layers.reduce<Record<string, LayerDescriptor[]>>((acc, l) => {
+  // Substring filter over title/id so an operator can find a layer without
+  // scanning every folder (one of the "grouping sucks" fixes).
+  const q = filter.trim().toLowerCase();
+  const shown = q
+    ? layers.filter((l) => l.title.toLowerCase().includes(q) || l.id.toLowerCase().includes(q))
+    : layers;
+  const grouped = shown.reduce<Record<string, LayerDescriptor[]>>((acc, l) => {
     (acc[l.group] ||= []).push(l);
     return acc;
   }, {});
+
+  // Layers currently live — pinned at the top so the operator sees what's on
+  // without expanding folders.
+  const enabledLayers = layers.filter((l) => registry.isEnabled(l.id));
+
+  // Preset = clean picture for a task: enable the named set, turn everything
+  // else off. Unknown ids are simply absent from `layers`, so the preset stays
+  // valid as the registry changes.
+  const applyPreset = (on: string[]): void => {
+    const set = new Set(on);
+    for (const l of layers) {
+      if (set.has(l.id)) registry.enable(l.id);
+      else if (registry.isEnabled(l.id)) registry.disable(l.id);
+    }
+  };
 
   // Ordered group keys: GROUP_ORDER first (only those present), then any
   // unrecognised groups appended at the end. This means a newly registered
@@ -173,6 +219,52 @@ export function LayerRail({ registry, viewer }: Props): JSX.Element {
   return (
     <div className="p-3 space-y-2.5">
       <SectionLabel title="Layers" count={`${layers.length} REG`} />
+
+      {/* Filter — find a layer without hunting through folders. */}
+      <input
+        type="text"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder="Filter layers…"
+        aria-label="Filter layers"
+        className="w-full bg-[rgba(255,255,255,0.04)] border border-line rounded-sm px-2 py-1 text-[11px] text-txt-1 placeholder:text-txt-4 focus:outline-none focus:border-accent-line"
+      />
+
+      {/* Mission presets — one click for a clean task picture. */}
+      <div className="flex flex-wrap gap-1">
+        {PRESETS.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            onClick={() => applyPreset(p.on)}
+            className="mono text-[9px] uppercase tracking-[0.6px] px-1.5 py-[3px] rounded-sm border border-line text-txt-3 hover:text-accent hover:border-accent-line/50"
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Active — the layers currently live, pinned. */}
+      {enabledLayers.length > 0 && (
+        <div className="border-t border-[rgba(255,255,255,0.06)] pt-1.5">
+          <span className="mono text-[9px] tracking-[0.9px] uppercase text-accent">
+            Active · {enabledLayers.length}
+          </span>
+          <div className="flex flex-wrap gap-1 mt-1">
+            {enabledLayers.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => registry.disable(l.id)}
+                title={`Disable ${l.title}`}
+                className="mono text-[9px] px-1.5 py-[2px] rounded-sm border border-accent-line/40 text-txt-2 hover:text-alert hover:border-alert/50 truncate max-w-[120px]"
+              >
+                {l.title} ✕
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {groupKeys.map((group, groupIdx) => {
         const list = grouped[group] ?? [];

@@ -17,6 +17,7 @@ import { OpsPanel } from './layer-rail/OpsPanel.js';
 import { ImageryControl } from './imagery/ImageryControl.js';
 import { ChokepointsList } from './layer-rail/ChokepointsList.js';
 import { FeedsPanel } from './layer-rail/FeedsPanel.js';
+import { AcarsPanel } from './acars/AcarsPanel.js';
 import { EntityPanel } from './entity-panel/EntityPanel.js';
 import { IntelPanel } from './entity-panel/IntelPanel.js';
 import { InvestigationCanvas } from './graph/InvestigationCanvas.js';
@@ -37,11 +38,15 @@ import { LayerRegistry } from './registry/LayerRegistry.js';
 import { registerDefaults } from './registry/defaults.js';
 import { CopEditor } from './cop/CopEditor.js';
 import { Omnibar } from './command-bar/Omnibar.js';
+import { SelectionBar } from './command-bar/SelectionBar.js';
 import { AnnotationPanel } from './annotations/AnnotationPanel.js';
 import { WatchboxPanel } from './watchbox/WatchboxPanel.js';
 import { SituationsPanel } from './situations/SituationsPanel.js';
 import { ContextMenu } from './globe/ContextMenu.js';
 import { ImageryDiffPopup } from './imagery/ImageryDiff.js';
+import { GroundReconPanel } from './ground/GroundReconPanel.js';
+import { FieldPanel } from './field/FieldPanel.js';
+import { useGround } from './ground/groundStore.js';
 import { fetchRuntimeConfig } from './transport/config.js';
 import { AlertSubscriber } from './alerts/AlertSubscriber.js';
 import { AlertsPanel } from './alerts/AlertsPanel.js';
@@ -52,7 +57,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext.js';
 import { isSupabaseConfigured } from './transport/supabase.js';
 import { resetToTopDown } from './globe/camera.js';
-import { apiFetch, withWsKey } from './transport/http.js';
+import { apiFetch, backendWsUrl, withWsKey } from './transport/http.js';
 
 export function App(): JSX.Element {
   const registry = useMemo(() => {
@@ -72,6 +77,9 @@ export function App(): JSX.Element {
   // passing render. openSeq===0 (never asked) keeps the normal 'selection'
   // default and a stable key, so the rest of the rails behave exactly as before.
   const investigationOpenSeq = useInvestigation((s) => s.openSeq);
+  // Right-click "Ground recon here" bumps groundOpenSeq to bring the Ground tab
+  // forward, exactly like investigationOpenSeq does for Search-around.
+  const groundOpenSeq = useGround((s) => s.openSeq);
 
   useEffect(() => {
     fetchRuntimeConfig()
@@ -107,6 +115,7 @@ export function App(): JSX.Element {
       { id: 'imagery', label: 'Imagery', content: <ImageryControl /> },
       { id: 'chokepoints', label: 'Chokepoints', content: <ChokepointsList viewer={viewer} /> },
       { id: 'feeds', label: 'Feeds', content: <FeedsPanel /> },
+      { id: 'acars', label: 'ACARS', content: <AcarsPanel /> },
       { id: 'annotate', label: 'Annotate', content: <AnnotationPanel /> },
       { id: 'extract', label: 'Extract', content: <ExtractPanel /> },
       { id: 'watch', label: 'Watch', content: <WatchboxPanel /> },
@@ -127,6 +136,8 @@ export function App(): JSX.Element {
       { id: 'alerts', label: 'Alerts', content: <AlertsRailList viewer={viewer} /> },
       { id: 'intel', label: 'Intel', content: <IntelPanel viewer={viewer} /> },
       { id: 'news', label: 'News', content: <NewsPanel /> },
+      { id: 'ground', label: 'Ground', content: <GroundReconPanel viewer={viewer} /> },
+      { id: 'field', label: 'Field', content: <FieldPanel viewer={viewer} /> },
     ],
     [viewer],
   );
@@ -140,6 +151,7 @@ export function App(): JSX.Element {
     <>
       <AlertSubscriber />
       <ConsoleShell
+        overlayLeft={<SelectionBar viewer={viewer} />}
         top={
           <CommandBar
             viewer={viewer}
@@ -148,7 +160,7 @@ export function App(): JSX.Element {
             onOpenAlerts={() => setAlertsOpen(true)}
           />
         }
-        left={<TabbedPanel tabs={leftTabs} defaultTab="ops" ariaLabel="Left rail tabs" />}
+        left={<TabbedPanel tabs={leftTabs} defaultTab="ops" variant="menu" ariaLabel="Left rail tabs" />}
         leftTabs={leftTabs}
         globe={
           error ? (
@@ -187,11 +199,20 @@ export function App(): JSX.Element {
           hideRightRail ? null : (
             <TabbedPanel
               // Remount + re-default to Investigation only when the operator
-              // pressed "Search around" (openSeq>0). The stable key for openSeq===0
-              // means the rail mounts once and behaves exactly as before until then.
-              key={`right-${investigationOpenSeq}`}
+              // pressed "Search around" (openSeq>0), or to Ground when they right-
+              // clicked "Ground recon here" (groundOpenSeq). The stable key when
+              // both are 0 means the rail mounts once and behaves as before until
+              // an explicit focus action. Most-recent seq wins the default.
+              key={`right-${investigationOpenSeq}-${groundOpenSeq}`}
               tabs={rightTabs}
-              defaultTab={investigationOpenSeq > 0 ? 'investigation' : 'selection'}
+              variant="menu"
+              defaultTab={
+                groundOpenSeq > 0 && groundOpenSeq >= investigationOpenSeq
+                  ? 'ground'
+                  : investigationOpenSeq > 0
+                    ? 'investigation'
+                    : 'selection'
+              }
               ariaLabel="Right rail tabs"
             />
           )
@@ -530,9 +551,7 @@ function CopControl({
 // WS origin for the same host the page is served from (the API is reverse-proxied
 // onto the same origin in every deployment), choosing ws/wss off the page scheme.
 function wsBase(): string {
-  if (typeof window === 'undefined') return '';
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}`;
+  return backendWsUrl('/').replace(/\/$/, '');
 }
 
 // "You're not signed in" affordance. On the hosted backend every data endpoint

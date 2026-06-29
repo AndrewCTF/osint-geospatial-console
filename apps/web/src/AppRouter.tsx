@@ -10,6 +10,7 @@ import { AuthForm } from './auth/AuthForm.js';
 import { LoginPage } from './auth/LoginPage.js';
 import { SignupPage } from './auth/SignupPage.js';
 import { SettingsModal } from './settings/SettingsModal.js';
+import { useSettings } from './state/settings.js';
 import { VelocityNewsPage } from './news/VelocityNewsPage.js';
 import { StoryView } from './news/StoryView.js';
 
@@ -22,6 +23,7 @@ export function AppRouter(): JSX.Element {
     <BrowserRouter basename={BASENAME}>
       <AuthProvider>
         <TopBar />
+        <PredictedMotionBadge />
         <Routes>
           <Route path="/" element={<DashboardRoute />} />
           <Route path="/2d" element={<App2D />} />
@@ -48,7 +50,6 @@ function DashboardRoute(): JSX.Element {
 
 function TopBar(): JSX.Element | null {
   const loc = useLocation();
-  const { user } = useAuth();
   const mode = useDashboardMode((s) => s.mode);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The auth pages are full-screen cards — no overlay chrome on them.
@@ -61,16 +62,14 @@ function TopBar(): JSX.Element | null {
   const isStudio = loc.pathname.startsWith('/studio');
   return (
     <div className="absolute top-1 right-2 z-[1000] flex items-center gap-2">
-      {user && (
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          title="API keys & settings"
-          className="mono text-[10px] px-2 py-0.5 border border-line rounded-sm text-txt-2 hover:border-accent-line hover:text-accent"
-        >
-          ⚙ Keys
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setSettingsOpen(true)}
+        title="Settings — dashboard, aircraft motion & API keys"
+        className="mono text-[10px] px-2 py-0.5 border border-line rounded-sm text-txt-2 hover:border-accent-line hover:text-accent"
+      >
+        ⚙ Settings
+      </button>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <AccountChip />
       <div className="flex gap-1">
@@ -93,6 +92,22 @@ function TopBar(): JSX.Element | null {
           STUDIO
         </Link>
       </div>
+    </div>
+  );
+}
+
+// Honest marker for the dead-reckoning opt-in: while aircraft positions are
+// being ESTIMATED between ADS-B fixes, a pulsing chip on the map says so. Only
+// on the live map routes ("/" and "/2d"), only when the setting is ON.
+function PredictedMotionBadge(): JSX.Element | null {
+  const loc = useLocation();
+  const on = useSettings((s) => s.aircraftDeadReckon);
+  if (!on) return null;
+  if (loc.pathname !== '/' && !loc.pathname.startsWith('/2d')) return null;
+  return (
+    <div className="absolute bottom-2 left-2 z-[1000] mono text-[10px] px-2 py-1 rounded-sm border border-accent-line bg-bg-1/90 text-accent pointer-events-none flex items-center gap-1.5">
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+      Predicted motion — aircraft positions estimated between ADS-B fixes
     </div>
   );
 }

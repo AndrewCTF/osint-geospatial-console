@@ -7,27 +7,20 @@
 -- OR (shared AND row.classification <= reader.clearance AND row.compartments ⊆
 -- reader.compartments). A user may never create/raise a row above their own
 -- clearance. action_log is append-only (trigger + revoked grants).
+--
+-- ORDER MATTERS: columns are added BEFORE the language-sql helper functions and
+-- the policies that reference them. A `language sql` function body is validated
+-- at CREATE time, so profiles.clearance must exist before current_clearance() is
+-- defined (else ERROR 42703 column "clearance" does not exist).
 
--- ── Helper fns: read CURRENT user's clearance/compartments/roles (bypass RLS) ──
-create or replace function public.current_clearance() returns smallint
-  language sql stable security definer set search_path = public as
-$$ select coalesce((select clearance from public.profiles where id = auth.uid()), 0::smallint) $$;
-
-create or replace function public.current_compartments() returns text[]
-  language sql stable security definer set search_path = public as
-$$ select coalesce((select compartments from public.profiles where id = auth.uid()), '{}'::text[]) $$;
-
-create or replace function public.current_roles() returns text[]
-  language sql stable security definer set search_path = public as
-$$ select coalesce((select roles from public.profiles where id = auth.uid()), '{}'::text[]) $$;
-
--- ── profiles: clearance / compartments / roles (least privilege defaults) ──
+-- ── 1. Add columns FIRST ─────────────────────────────────────────────────────
+-- profiles: clearance / compartments / roles (least privilege defaults)
 alter table public.profiles
   add column if not exists clearance smallint not null default 0,
   add column if not exists compartments text[] not null default '{}',
   add column if not exists roles text[] not null default '{analyst}';
 
--- ── classified tables: classification + compartments + shared flag ──
+-- classified tables: classification + compartments + shared flag
 alter table public.objects
   add column if not exists classification smallint not null default 0,
   add column if not exists compartments text[] not null default '{}',
@@ -41,7 +34,28 @@ alter table public.target_board
   add column if not exists compartments text[] not null default '{}',
   add column if not exists shared boolean not null default false;
 
--- ── clearance read policies (permissive → OR'd with existing *_self_select) ──
+-- action_log: audit columns (reuse user_id=actor, target_id=resource_id, params=detail)
+alter table public.action_log
+  add column if not exists actor_email text,
+  add column if not exists resource_type text,
+  add column if not exists classification smallint not null default 0,
+  add column if not exists ip inet,
+  add column if not exists user_agent text;
+
+-- ── 2. Helper fns: read CURRENT user's clearance/compartments/roles (bypass RLS) ──
+create or replace function public.current_clearance() returns smallint
+  language sql stable security definer set search_path = public as
+$$ select coalesce((select clearance from public.profiles where id = auth.uid()), 0::smallint) $$;
+
+create or replace function public.current_compartments() returns text[]
+  language sql stable security definer set search_path = public as
+$$ select coalesce((select compartments from public.profiles where id = auth.uid()), '{}'::text[]) $$;
+
+create or replace function public.current_roles() returns text[]
+  language sql stable security definer set search_path = public as
+$$ select coalesce((select roles from public.profiles where id = auth.uid()), '{}'::text[]) $$;
+
+-- ── 3. clearance read policies (permissive → OR'd with existing *_self_select) ──
 drop policy if exists objects_clearance_select on public.objects;
 create policy objects_clearance_select on public.objects for select
   using (shared and classification <= public.current_clearance()
@@ -55,7 +69,7 @@ create policy target_board_clearance_select on public.target_board for select
   using (shared and classification <= public.current_clearance()
          and compartments <@ public.current_compartments());
 
--- ── restrictive: cannot create/raise a row above your own clearance ──
+-- ── 4. restrictive: cannot create/raise a row above your own clearance ──
 drop policy if exists objects_clf_ceiling on public.objects;
 create policy objects_clf_ceiling on public.objects as restrictive for insert
   with check (classification <= public.current_clearance()
@@ -81,15 +95,7 @@ create policy target_board_clf_ceiling_upd on public.target_board as restrictive
   with check (classification <= public.current_clearance()
               and compartments <@ public.current_compartments());
 
--- ── action_log: audit columns (reuse user_id=actor, target_id=resource_id, params=detail) ──
-alter table public.action_log
-  add column if not exists actor_email text,
-  add column if not exists resource_type text,
-  add column if not exists classification smallint not null default 0,
-  add column if not exists ip inet,
-  add column if not exists user_agent text;
-
--- ── action_log immutability: append-only trigger + revoked grants ──
+-- ── 5. action_log immutability: append-only trigger + revoked grants ──
 create or replace function public.action_log_immutable() returns trigger
   language plpgsql as
 $$ begin raise exception 'action_log is append-only'; end $$;
@@ -98,12 +104,12 @@ create trigger action_log_no_mutate before update or delete on public.action_log
   for each row execute function public.action_log_immutable();
 revoke update, delete on public.action_log from authenticated, anon;
 
--- ── action_log auditor read (all rows) — OR'd with existing self_select ──
+-- action_log auditor read (all rows) — OR'd with existing self_select
 drop policy if exists action_log_auditor_select on public.action_log;
 create policy action_log_auditor_select on public.action_log for select
   using ('auditor' = any(public.current_roles()) or 'admin' = any(public.current_roles()));
 
--- ── collab CRDT doc store (phase D) ──
+-- ── 6. collab CRDT doc store (phase D) ──
 create table if not exists public.collab_docs (
   doc_id text primary key,
   kind text not null default 'investigation',

@@ -20,7 +20,7 @@ import { SectionLabel, Badge, type BadgeTone } from '../shell/instruments.js';
 import { chokepoints, type Chokepoint } from '../registry/chokepoints.js';
 import { useAoi } from '../state/aoi.js';
 import { flyToChokepoint } from '../globe/camera.js';
-import { useAlerts } from '../state/stores.js';
+import { apiFetch } from '../transport/http.js';
 import { useReducedMotion } from '../shell/useReducedMotion.js';
 
 // Each chokepoint gets a small category-toned dot so the list scans fast.
@@ -77,8 +77,42 @@ export function OpsPanel({
 }): JSX.Element {
   const active = useAoi((s) => s.active);
   const setActive = useAoi((s) => s.setActive);
-  const alerts = useAlerts((s) => s.alerts);
   const reduced = useReducedMotion();
+
+  // LEVEL view of what is currently inside the operator's watch areas. Polled
+  // from /api/alerts/standing (the evaluator's most recent picture × the user's
+  // rules) so this section is stable across reloads / reconnects / restarts —
+  // unlike the EDGE-triggered alert buffer, which only blips on a fresh crossing.
+  const [standing, setStanding] = useState<{ counts: Record<string, number>; total: number }>({
+    counts: {},
+    total: 0,
+  });
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async (): Promise<void> => {
+      try {
+        // no-store: this is a live level poll — never let the browser replay a
+        // stale/misrouted cached body (e.g. an index.html served during a backend
+        // blip), which would freeze the panel on wrong data.
+        const r = await apiFetch('/api/alerts/standing', { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const data = (await r.json()) as {
+          detections?: unknown[];
+          counts?: Record<string, number>;
+        };
+        if (cancelled) return;
+        setStanding({ counts: data.counts ?? {}, total: (data.detections ?? []).length });
+      } catch {
+        /* keep last good counts on a transient failure */
+      }
+    };
+    void poll();
+    const handle = window.setInterval(() => void poll(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+    };
+  }, []);
 
   // Live in-AOI contact counts, recomputed every ~2s off the viewer's clock.
   const [liveCounts, setLiveCounts] = useState<Map<string, number> | null>(null);
@@ -100,16 +134,14 @@ export function OpsPanel({
     };
   }, [viewer]);
 
-  // Group the live alert buffer by severity, keep only non-empty buckets in a
-  // fixed critical→info order.
+  // Group the current standing-detection counts by severity, keep only non-empty
+  // buckets in a fixed critical→info order.
   const detections = useMemo(() => {
-    const counts = new Map<AlertSeverity, number>();
-    for (const a of alerts) counts.set(a.severity, (counts.get(a.severity) ?? 0) + 1);
     return SEVERITY_ORDER.flatMap((sev) => {
-      const n = counts.get(sev) ?? 0;
+      const n = standing.counts[sev] ?? 0;
       return n > 0 ? [{ sev, n }] : [];
     });
-  }, [alerts]);
+  }, [standing]);
 
   return (
     <div className="p-3 space-y-4">
@@ -166,7 +198,7 @@ export function OpsPanel({
 
       {/* ── Standing detections ───────────────────────────────────────────── */}
       <section className="space-y-1.5">
-        <SectionLabel title="Standing detections" count={alerts.length} />
+        <SectionLabel title="Standing detections" count={standing.total} />
         {detections.length === 0 ? (
           <div className="mono text-[10px] text-txt-3 px-2 py-[5px]">no detections firing</div>
         ) : (

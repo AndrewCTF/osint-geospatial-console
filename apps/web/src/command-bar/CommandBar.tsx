@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type * as Cesium from 'cesium';
-import { useFeeds, useAlerts, useImagery, useConnection, useSim, type WsStatus } from '../state/stores.js';
+import { useAlerts, useImagery, useSim } from '../state/stores.js';
 import { useAoi } from '../state/aoi.js';
 import { useUiMode, type UiMode } from '../state/uiMode.js';
 import { AoiSelector } from './AoiSelector.js';
@@ -24,17 +24,17 @@ interface Props {
 }
 
 // Each top-level cell: full height, hairline right divider, tight padding.
-// px-2 (not px-3) so the full control row fits common laptop widths without the
-// bar overflowing → no horizontal scrollbar on the top nav.
-const CELL = 'h-full flex items-center gap-2 px-2 border-r border-line';
+// px-1 (not px-2/px-3) so the full control row fits 1280px laptops without the
+// bar overflowing → no horizontal scrollbar on the top nav. Measured live at 1280:
+// px-2 → 41px over; px-1.5 → 14px over; px-1 (+ the SysStats trim below) → fits
+// with ~26px margin. Keep it tight if you add a cell.
+const CELL = 'h-full flex items-center gap-2 px-1 border-r border-line';
 
 export function CommandBar({
   viewer,
   classification = 'UNCLAS',
   onOpenAlerts,
 }: Props): JSX.Element {
-  const feeds = useFeeds((s) => s.feeds);
-  const feedList = Object.values(feeds);
   const setActiveAoi = useAoi((s) => s.setActive);
   const imageryMode = useImagery((s) => s.mode);
   const setImageryMode = useImagery((s) => s.setMode);
@@ -102,11 +102,6 @@ export function CommandBar({
         <AgentIndicator />
       </div>
 
-      {/* WS connection state — live/down pill so silence is unambiguous */}
-      <div className={CELL}>
-        <WsPill />
-      </div>
-
       {/* UTC clock — operator orientation */}
       <div className={CELL}>
         <span className="mono text-[11px] text-txt-2 tabular-nums" title="UTC">
@@ -122,24 +117,9 @@ export function CommandBar({
         <PostureCaveat classification={classification} />
       </div>
 
-      {/* feed-health cluster — dots only (labels live in the Map-health strip +
-          the hover title); kept compact so the bar never overflows the viewport. */}
-      <div className={`${CELL} gap-1.5 min-w-0`} role="status" aria-label="Feed health">
-        {feedList.length === 0 && <span className="micro">no feeds</span>}
-        {feedList.map((f) => (
-          <span
-            key={f.id}
-            className="flex items-center"
-            title={`${f.label}\nstatus: ${f.status}${f.lastSeen ? `\nlast: ${new Date(f.lastSeen).toISOString().slice(11, 19)}Z` : ''}`}
-          >
-            <StatusDot tone={f.status} />
-          </span>
-        ))}
-      </div>
-
       {/* system stats — live entity total (real, from the viewer) + UTC tick
           source FPS, both genuinely measured. Last cell: no right divider. */}
-      <div className="h-full flex items-center gap-3 px-3">
+      <div className="h-full flex items-center gap-2 px-2">
         <SysStats viewer={viewer} />
       </div>
     </div>
@@ -412,70 +392,6 @@ function SimToggle(): JSX.Element {
       SIM
     </button>
   );
-}
-
-/**
- * Compact mono pill that reflects the /ws/alerts socket state. Operators
- * need to distinguish "no alerts firing" (live + quiet) from "we lost the
- * stream" (down). Reads from useConnection, written by AlertSubscriber.
- */
-function WsPill(): JSX.Element {
-  const ws = useConnection((s) => s.ws);
-  const label = wsLabel(ws);
-  const cls = wsClass(ws);
-  const dot = wsDot(ws);
-  const title =
-    ws === 'open'
-      ? 'WebSocket connection to /ws/alerts is live'
-      : ws === 'connecting'
-        ? 'Connecting to /ws/alerts…'
-        : 'WebSocket to /ws/alerts is down — alerts may be stale';
-  return (
-    <span
-      role="status"
-      aria-live="polite"
-      title={title}
-      data-testid="ws-pill"
-      data-ws={ws}
-      className={`mono text-[9px] tracking-[0.6px] uppercase px-2 py-1 border rounded-sm flex items-center gap-1.5 ${cls}`}
-    >
-      <StatusDot tone={dot} />
-      WS · {label}
-    </span>
-  );
-}
-
-function wsLabel(s: WsStatus): string {
-  switch (s) {
-    case 'open':
-      return 'live';
-    case 'connecting':
-      return '…';
-    case 'closed':
-      return 'down';
-  }
-}
-
-function wsClass(s: WsStatus): string {
-  switch (s) {
-    case 'open':
-      return 'border-line text-ok';
-    case 'connecting':
-      return 'border-line text-txt-2';
-    case 'closed':
-      return 'border-alert/40 text-alert';
-  }
-}
-
-function wsDot(s: WsStatus): string {
-  switch (s) {
-    case 'open':
-      return 'ok';
-    case 'connecting':
-      return 'neutral';
-    case 'closed':
-      return 'alert';
-  }
 }
 
 /**
