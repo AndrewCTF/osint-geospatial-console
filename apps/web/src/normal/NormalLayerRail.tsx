@@ -1,120 +1,44 @@
-// NormalLayerRail — the CLEAN grouped layer rail for the "Normal" dashboard,
-// ported straight from the Gotham design mockup (dashboard.html · left rail).
+// NormalLayerRail — the "Map layers" tab of the Normal dashboard's Palantir-Gotham left rail.
 //
-// Unlike the dense Professional `LayerRail` (opacity sliders, "0 · NOW 100%"
-// readouts, faceted controls) this rail is deliberately SIMPLE: collapsible
-// domain groups ("Aviation / Maritime / Space / Hazards / …") whose rows are
-// just a status dot + a domain icon + the layer title + an accessible toggle.
-//
-// It owns NO data of its own — every row is wired to the real `LayerRegistry`
-// (enable/disable + isEnabled) and the live `useFeeds` store (the status dot).
-// All look lives in ./normal.css under the `.nrm` scope; this file emits only
-// structure + behaviour. Strict TS, NodeNext ESM (relative imports end in .js).
+// Clean, Gotham-style: a few named collapsible FOLDERS of plain-English capability rows
+// (Aircraft / Vessels / Earthquakes …) — NOT one row per feed source, NO opacity sliders.
+// The redundant breadth sources (adsb.fi / OpenSky / AISStream) are hidden here and live on
+// the Data sources tab. Grouping is the curated ./layerCatalog.ts; every row is wired to the
+// real LayerRegistry (enable/disable) and the live useFeeds store (the status dot).
 import { useEffect, useMemo, useState } from 'react';
 import type * as Cesium from 'cesium';
-import type { LayerDescriptor, LayerGroup } from '@osint/shared';
+import type { LayerDescriptor } from '@osint/shared';
 import type { LayerRegistry } from '../registry/LayerRegistry.js';
-import { useFeeds, type FeedHealth, type FeedStatus } from '../state/stores.js';
-import { Icon, type IconName } from './Icon.js';
+import { useFeeds, feedStatusSignature, type FeedHealth, type FeedStatus } from '../state/stores.js';
+import { Icon } from './Icon.js';
+import {
+  MAP_LAYER_FOLDERS,
+  folderCounts,
+  rowEnabled,
+  toggleRow,
+  toggleFolder,
+  type CatalogFolder,
+  type CatalogRow,
+} from './layerCatalog.js';
 
 export interface NormalLayerRailProps {
   registry: LayerRegistry;
   viewer: Cesium.Viewer | null;
+  /** Top-bar section nav (air/maritime/space/hazards) → show just that folder. */
   filterGroup?: string | null;
 }
 
-// Render order + display label for every domain group (per the design brief).
-const GROUP_ORDER: readonly LayerGroup[] = [
-  'conflict',
-  'aviation',
-  'maritime',
-  'space',
-  'hazards',
-  'env',
-  'news',
-  'cyber',
-  'infra',
-  'rf',
-  'signals',
-  'imagery',
-  'reference',
-  'seismic',
-];
-
-const GROUP_LABEL: Record<LayerGroup, string> = {
-  conflict: 'Conflict',
-  aviation: 'Aviation',
-  maritime: 'Maritime',
-  space: 'Space',
-  hazards: 'Hazards',
-  env: 'Environment',
-  news: 'OSINT/Events',
-  cyber: 'Cyber/Intel',
-  infra: 'Infrastructure',
-  rf: 'RF/Signals',
-  signals: 'Signals',
-  imagery: 'Imagery',
-  reference: 'Reference',
-  seismic: 'Seismic',
+// Section-nav id → catalog folder id (aviation→air, hazards→ground; others match).
+const SECTION_TO_FOLDER: Record<string, string> = {
+  aviation: 'air',
+  maritime: 'maritime',
+  space: 'space',
+  hazards: 'ground',
 };
-
-// Domain icon for a group header (.gicon). Falls back to the generic stack.
-const GROUP_ICON: Record<LayerGroup, IconName> = {
-  conflict: 'crosshair',
-  aviation: 'plane',
-  maritime: 'ship',
-  space: 'satellite',
-  hazards: 'fire',
-  env: 'fire',
-  news: 'bell',
-  cyber: 'signal',
-  infra: 'layers',
-  rf: 'signal',
-  signals: 'signal',
-  imagery: 'image',
-  reference: 'layers',
-  seismic: 'quake',
-};
-
-// Groups that start expanded; everything else collapses until clicked.
-const DEFAULT_OPEN: ReadonlySet<LayerGroup> = new Set<LayerGroup>([
-  'conflict',
-  'aviation',
-  'maritime',
-]);
-
-// Per-row domain icon (.ico). Prefer what the layer actually emits, else its
-// group icon — keeps the row legible without a per-layer lookup table.
-function rowIcon(layer: LayerDescriptor): IconName {
-  const emit = layer.emits?.[0];
-  switch (emit) {
-    case 'aircraft':
-      return 'plane';
-    case 'vessel':
-      return 'ship';
-    case 'satellite':
-      return 'satellite';
-    case 'quake':
-      return 'quake';
-    case 'fire':
-      return 'fire';
-    case 'detection':
-      return 'crosshair';
-    case 'emitter':
-    case 'outage':
-      return 'signal';
-    case 'event':
-      return 'bell';
-    case 'camera':
-      return 'image';
-    default:
-      return GROUP_ICON[layer.group];
-  }
-}
 
 type DotTone = 'green' | 'amber' | 'red' | 'blue' | 'off';
 
-// Significant lowercase tokens (len ≥ 3) used for loose feed↔layer matching.
+// Significant lowercase tokens (len ≥ 3) for loose feed↔layer matching.
 function tokens(...parts: readonly string[]): readonly string[] {
   return parts
     .join(' ')
@@ -123,8 +47,6 @@ function tokens(...parts: readonly string[]): readonly string[] {
     .filter((t) => t.length >= 3);
 }
 
-// A feed "loosely matches" a layer when their ids nest, or they share a domain
-// token (e.g. adsb / ais / satellite / quake). Deterministic, no fuzzy scoring.
 function feedMatches(layer: LayerDescriptor, feed: FeedHealth): boolean {
   const lid = layer.id.toLowerCase();
   const fid = feed.id.toLowerCase();
@@ -133,36 +55,54 @@ function feedMatches(layer: LayerDescriptor, feed: FeedHealth): boolean {
   return tokens(layer.id, layer.title).some((t) => ftoks.has(t));
 }
 
-// Status dot: a matching feed's health wins (green/amber/red); otherwise the
-// dot reflects whether the layer is enabled (blue) or off.
-function dotTone(layer: LayerDescriptor, feeds: Record<string, FeedHealth>, enabled: boolean): DotTone {
+// Row status dot: best matching feed health across the row's mapped layers wins
+// (green/amber/red); otherwise blue when any mapped layer is enabled, else off.
+function rowTone(
+  registry: LayerRegistry,
+  feeds: Record<string, FeedHealth>,
+  row: CatalogRow,
+): DotTone {
   let matched: FeedStatus | null = null;
-  for (const feed of Object.values(feeds)) {
-    if (!feedMatches(layer, feed)) continue;
-    if (feed.status === 'green') return 'green';
-    if (matched === null || feed.status !== 'unknown') matched = feed.status;
+  for (const id of row.layerIds) {
+    const layer = registry.get(id);
+    if (!layer) continue;
+    for (const feed of Object.values(feeds)) {
+      if (!feedMatches(layer, feed)) continue;
+      if (feed.status === 'green') return 'green';
+      if (matched === null || feed.status !== 'unknown') matched = feed.status;
+    }
   }
   if (matched === 'amber') return 'amber';
   if (matched === 'red') return 'red';
-  return enabled ? 'blue' : 'off';
+  return rowEnabled(registry, row) ? 'blue' : 'off';
 }
 
 export function NormalLayerRail(props: NormalLayerRailProps): JSX.Element {
   const { registry, filterGroup } = props;
-  const feeds = useFeeds((s) => s.feeds);
+  // Subscribe to the STATUS signature (primitive) so a feed heartbeat that only
+  // updates lastSeen/note doesn't re-render the whole rail. The actual feeds map
+  // is read fresh inside the tone memo below, keyed on this signature.
+  const feedsSig = useFeeds((s) => feedStatusSignature(s.feeds));
 
-  // Live copy of the registry, refreshed whenever it emits (register / enable /
-  // disable / …). `tick` also bumps so isEnabled() reads re-evaluate on toggle.
-  const [layers, setLayers] = useState<readonly LayerDescriptor[]>(() => registry.list());
-  const [, setTick] = useState(0);
+  // Re-render on any registry change (enable/disable) so toggles + counts update.
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    const unsub = registry.subscribe(() => {
-      setLayers(registry.list());
-      setTick((n) => n + 1);
-    });
-    setLayers(registry.list());
+    const unsub = registry.subscribe(() => setTick((n) => n + 1));
     return unsub;
   }, [registry]);
+
+  // Precompute every row's status dot ONCE per (status-change | toggle) instead
+  // of O(rows×layers×feeds) on every render. Keyed on feedsSig + tick + registry.
+  const tones = useMemo(() => {
+    const feeds = useFeeds.getState().feeds;
+    const m = new Map<string, DotTone>();
+    for (const folder of MAP_LAYER_FOLDERS) {
+      for (const row of folder.rows) m.set(row.label, rowTone(registry, feeds, row));
+    }
+    return m;
+    // feedsSig is the intentional recompute key (feeds read via getState).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedsSig, tick, registry]);
 
   const [query, setQuery] = useState('');
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({});
@@ -170,36 +110,26 @@ export function NormalLayerRail(props: NormalLayerRailProps): JSX.Element {
   const q = query.trim().toLowerCase();
   const forceOpen = q.length > 0;
 
-  // Bucket the (optionally text-filtered, optionally group-filtered) layers by
-  // group, preserving registry order within each group.
-  const grouped = useMemo(() => {
-    const map = new Map<LayerGroup, LayerDescriptor[]>();
-    for (const layer of layers) {
-      if (filterGroup && layer.group !== filterGroup) continue;
-      if (q.length > 0 && !layer.title.toLowerCase().includes(q)) continue;
-      const bucket = map.get(layer.group) ?? [];
-      bucket.push(layer);
-      map.set(layer.group, bucket);
-    }
-    return map;
-  }, [layers, filterGroup, q]);
+  const isOpen = (folder: CatalogFolder): boolean =>
+    forceOpen || (openOverrides[folder.id] ?? folder.defaultOpen ?? false);
+  const toggleOpen = (folder: CatalogFolder): void =>
+    setOpenOverrides((prev) => ({ ...prev, [folder.id]: !isOpen(folder) }));
 
-  const onToggle = (id: string): void => {
-    if (registry.isEnabled(id)) registry.disable(id);
-    else registry.enable(id);
-  };
-
-  const isOpen = (group: LayerGroup): boolean =>
-    forceOpen || (openOverrides[group] ?? DEFAULT_OPEN.has(group));
-
-  const toggleOpen = (group: LayerGroup): void =>
-    setOpenOverrides((prev) => ({ ...prev, [group]: !isOpen(group) }));
-
-  const visibleGroups = GROUP_ORDER.filter((g) => (grouped.get(g)?.length ?? 0) > 0);
+  // Section-nav filter + text filter → which folders/rows to show.
+  const wantFolder = filterGroup ? SECTION_TO_FOLDER[filterGroup] ?? null : null;
+  const folders = useMemo(() => {
+    return MAP_LAYER_FOLDERS.map((folder) => {
+      const rows = q.length > 0 ? folder.rows.filter((r) => r.label.toLowerCase().includes(q)) : folder.rows;
+      return { folder, rows };
+    }).filter(({ folder, rows }) => {
+      if (wantFolder && folder.id !== wantFolder) return false;
+      return rows.length > 0;
+    });
+  }, [q, wantFolder]);
 
   return (
     <div className="railbody">
-      {/* Minimal text filter (kept light per the mockup — no facet controls). */}
+      {/* Text filter — light, per the Gotham mockup (no facet controls). */}
       <div className="row" style={{ cursor: 'default', marginBottom: '0.46em' }}>
         <Icon name="search" className="ico" />
         <input
@@ -207,67 +137,71 @@ export function NormalLayerRail(props: NormalLayerRailProps): JSX.Element {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter layers…"
+          placeholder="Search this map…"
           aria-label="Filter layers by name"
-          style={{
-            background: 'transparent',
-            border: 0,
-            outline: 'none',
-            color: 'inherit',
-            font: 'inherit',
-            width: '100%',
-          }}
+          style={{ background: 'transparent', border: 0, outline: 'none', color: 'inherit', font: 'inherit', width: '100%' }}
         />
       </div>
 
-      {visibleGroups.length === 0 ? (
+      {folders.length === 0 ? (
         <p className="note">No layers match “{query}”.</p>
       ) : (
-        visibleGroups.map((group) => {
-          const rows = grouped.get(group) ?? [];
-          const enabledCount = rows.reduce((n, l) => n + (registry.isEnabled(l.id) ? 1 : 0), 0);
-          const open = isOpen(group);
+        folders.map(({ folder, rows }) => {
+          const { on, total } = folderCounts(registry, folder);
+          const open = isOpen(folder);
+          const anyOn = on > 0;
           return (
-            <section className={open ? 'group open' : 'group'} key={group}>
-              <button
-                type="button"
-                className="group-head"
-                aria-expanded={open}
-                onClick={() => toggleOpen(group)}
-                style={{ width: '100%', border: 0, background: 'none', textAlign: 'left' }}
-              >
-                <Icon name="chevron-right" className="chev" />
-                <Icon name={GROUP_ICON[group]} className="gicon" />
-                <span className="gname">{GROUP_LABEL[group]}</span>
+            <section className={open ? 'group open' : 'group'} key={folder.id}>
+              <div className="folder-head" style={{ display: 'flex', alignItems: 'center', gap: '0.3em' }}>
+                <button
+                  type="button"
+                  className="folder-expand"
+                  aria-expanded={open}
+                  onClick={() => toggleOpen(folder)}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4em', border: 0, background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit', padding: 0 }}
+                >
+                  <Icon name="chevron-right" className="chev" />
+                  <Icon name={folder.icon} className="gicon" />
+                  <span className="gname">{folder.label}</span>
+                </button>
                 <span className="gcount">
-                  {enabledCount} / {rows.length}
+                  {on} / {total}
                 </span>
-              </button>
+                {/* Eye toggle — enables/disables the whole folder (Palantir visibility). */}
+                <button
+                  type="button"
+                  className="toggle"
+                  role="switch"
+                  aria-checked={anyOn}
+                  aria-label={`Toggle all ${folder.label} layers`}
+                  onClick={() => toggleFolder(registry, folder)}
+                />
+              </div>
               {open && (
                 <div className="group-body">
-                  {rows.map((layer) => {
-                    const enabled = registry.isEnabled(layer.id);
-                    const tone = dotTone(layer, feeds, enabled);
+                  {rows.map((row) => {
+                    const enabled = rowEnabled(registry, row);
+                    const tone = tones.get(row.label) ?? 'off';
                     return (
                       <div
                         className={enabled ? 'row sel' : 'row'}
-                        key={layer.id}
-                        onClick={() => onToggle(layer.id)}
+                        key={row.label}
+                        onClick={() => toggleRow(registry, row)}
                       >
                         <span className={`dot ${tone}`} aria-hidden="true" />
-                        <Icon name={rowIcon(layer)} className="ico" />
-                        <span className="nm" title={layer.title}>
-                          {layer.title}
+                        <Icon name={row.icon} className="ico" />
+                        <span className="nm" title={row.label}>
+                          {row.label}
                         </span>
                         <button
                           type="button"
                           className="toggle"
                           role="switch"
                           aria-checked={enabled}
-                          aria-label={layer.title}
+                          aria-label={row.label}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onToggle(layer.id);
+                            toggleRow(registry, row);
                           }}
                         />
                       </div>

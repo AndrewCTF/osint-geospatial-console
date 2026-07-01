@@ -37,6 +37,7 @@ import datetime as dt
 import gzip
 import hashlib
 import json
+import threading
 import time
 from math import cos, radians
 from typing import Any
@@ -552,6 +553,21 @@ _SNAPSHOT_STALE_S = 30.0
 # union ships in FULL at world view (no world-view decimation) — it only thins if
 # the union ever exceeds 20k, via the stable md5 subset in viewport_filter.
 _WORLD_LIMIT = 20000
+
+# Position-age cap for the SERVED snapshot. A contact whose last real fix is older
+# than this is dropped from what the frontend sees, so the map never shows a plane
+# frozen at a stale position with a climbing "44m ago" readout. The OpenSky tier is
+# pulled once/UTC-day and served cached (count-holding), so a straggler that was
+# already out-of-coverage at pull time keeps a frozen seen_pos_s; before this cap it
+# rode the union all day and surfaced in EntityPanel as "44m ago". Only a handful of
+# contacts exceed the cap (most OpenSky fixes are seconds old at pull), so the union
+# stays ~13k (>=8000 guardrail held). Applied at the serve boundary (viewport_filter)
+# so BOTH the world blob and the zoomed bbox path are covered; internal readers
+# (jamming via global_snapshot) are untouched and still see every cell.
+# ponytail: known ceiling — the OpenSky cache freezes seen_pos_s, so a contact whose
+# fix was fresh at pull can read "fresh" all day; that's the existing count-holding
+# tradeoff, not fixed here — the cap only removes the visibly-stale stragglers.
+_STALE_POS_CAP_S = 900.0
 _HOT_BLOB: bytes | None = None  # gzip-compressed JSON of the decimated world FC
 _HOT_ETAG: str = ""  # md5 of the blob — drives ETag/304 (poll inside a cycle → 304)
 # WebSocket push subscribers. The refresher fans _HOT_BLOB out to these on each new
@@ -973,12 +989,20 @@ async def _fetch_one_feed(client: httpx.AsyncClient, url: str) -> list[dict[str,
 # pulls so the loopback connection stays keep-alive. Only the localhost sidecar
 # (one feed) uses this path, so the lazy init can't race.
 _SYNC_FEED_CLIENT: httpx.Client | None = None
+_SYNC_FEED_CLIENT_LOCK = threading.Lock()
 
 
 def _sync_feed_client() -> httpx.Client:
+    # Shared sync client, reused across pulls for keep-alive. ALL feeds now pull
+    # through here from worker threads (asyncio.to_thread), so the lazy init is
+    # guarded by a lock — concurrent first-pulls would otherwise race to build two
+    # clients and leak one. httpx.Client itself is thread-safe for concurrent
+    # requests (httpcore's pool is); only the init needs protecting.
     global _SYNC_FEED_CLIENT
     if _SYNC_FEED_CLIENT is None:
-        _SYNC_FEED_CLIENT = httpx.Client(follow_redirects=True)
+        with _SYNC_FEED_CLIENT_LOCK:
+            if _SYNC_FEED_CLIENT is None:
+                _SYNC_FEED_CLIENT = httpx.Client(follow_redirects=True)
     return _SYNC_FEED_CLIENT
 
 
@@ -1026,17 +1050,19 @@ async def _pull_one_feed(url: str) -> None:
     ac: list[dict[str, Any]] = []
     ts = time.monotonic()
     try:
-        if "127.0.0.1" in url or "localhost" in url:
-            # Sidecar pull runs OFF the event loop in a worker thread so loop
-            # contention (vessel parse / blob build / WS broadcast saturating the
-            # loop) can't starve the loopback read — the proven cause of a FROZEN
-            # localhost slice that made aircraft look 30 s-1 m stale despite the
-            # sidecar's own ~0.4 s data. ts is captured in-thread (see
-            # _fetch_one_feed_sync), so the slice is fresh even if the loop is slow
-            # to resume and store it.
-            ts, ac = await asyncio.to_thread(_fetch_one_feed_sync, url)
-        else:
-            ac = await _fetch_one_feed(get_client(), url)
+        # EVERY feed pulls OFF the event loop in a worker thread — not just the
+        # localhost sidecar. The async path parses each multi-MB body with a
+        # synchronous r.json() ON the loop (blocking it ~1-2 s per feed) AND reads
+        # the body in loop-scheduled chunks; on a CPU-contended host (the 2-vCPU
+        # droplet ran the loop at ~85%) that starves the OTHER feeds' reads until
+        # they exceed _feed_total_s and cancel — leaving EMPTY slices and an empty
+        # snapshot even though every mirror returns 200 with ~10k aircraft (the
+        # exact prod symptom: theairtraffic/hpradar 200 in the log, /api/adsb/global
+        # = 0). A blocking sync get+parse the OS services immediately regardless of
+        # loop load (measured 9.0 s on-loop -> 0.9 s threaded; socket I/O releases
+        # the GIL so the loop keeps running). ts is captured in-thread so the slice
+        # age is independent of when the loop resumes to store it.
+        ts, ac = await asyncio.to_thread(_fetch_one_feed_sync, url)
     finally:
         _FEED_NEXT_PULL[url] = time.monotonic() + _feed_interval(url)
     if ac:
@@ -1293,8 +1319,15 @@ def _merge_with_previous(
         if fid is None or fid in by_id:
             continue
         seen = (f.get("properties") or {}).get("seen_at")
-        if isinstance(seen, (int, float)) and now - seen <= max_age_s:
-            by_id[fid] = f
+        if not (isinstance(seen, (int, float)) and now - seen <= max_age_s):
+            continue
+        # Defense-in-depth for the serve-boundary cap: don't carry forward a
+        # contact whose POSITION is already stale past the cap. seen_at can stay
+        # fresh (re-stamped each cycle from the OpenSky cache) while seen_pos_s is
+        # frozen old — that pairing is exactly the "44m ago" straggler.
+        if _pos_stale(f):
+            continue
+        by_id[fid] = f
     return {"type": "FeatureCollection", "features": list(by_id.values())}
 
 
@@ -1363,6 +1396,16 @@ async def _refresh_snapshot_forever() -> None:
         await asyncio.sleep(max(0.0, _SNAPSHOT_TARGET_CYCLE_S - elapsed))
 
 
+def _pos_stale(f: dict[str, Any]) -> bool:
+    """True when a feature's last real position fix is older than the serve cap.
+
+    Reads seen_pos_s (position age in seconds, stamped by each tier). Absent or
+    non-numeric → False (keep): an unknown age isn't evidence of staleness.
+    """
+    sp = (f.get("properties") or {}).get("seen_pos_s")
+    return isinstance(sp, (int, float)) and float(sp) > _STALE_POS_CAP_S
+
+
 def viewport_filter(
     fc: dict[str, Any],
     lamin: float | None,
@@ -1381,6 +1424,11 @@ def viewport_filter(
     set stays spatially even rather than clipping a corner.
     """
     feats = fc.get("features") or []
+    # Drop position-stale stragglers before bbox/decimation so no served contact
+    # renders frozen with a climbing "Nm ago" age (see _STALE_POS_CAP_S). Keep any
+    # feature whose seen_pos_s is absent/unparseable — we can't judge its age, and
+    # dropping unknowns would thin the union.
+    feats = [f for f in feats if not _pos_stale(f)]
     if None not in (lamin, lomin, lamax, lomax):
         wrap = lomin > lomax  # type: ignore[operator]
         kept: list[dict[str, Any]] = []

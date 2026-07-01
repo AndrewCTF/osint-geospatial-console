@@ -1,16 +1,20 @@
 import * as Cesium from 'cesium';
 import { apiFetch } from '../../transport/http.js';
+import { eventIcon, type EventGlyph } from '../eventIcons.js';
+import { conflictSymbol, incidentSymbol, outageSymbol } from './eventStyle.js';
 import type { AdapterCtx, LayerAdapter } from './types.js';
 
-// Renders cross-domain incidents (the fusion brief) and internet outages (CAIDA
-// IODA) as translucent coloured AREAS with a text label — orange/red by
-// severity, pulsing for the most severe — instead of a bare point. This is the
-// "conflict areas as areas, not dots" the operator asked for.
+// Renders cross-domain incidents (the fusion brief), GDELT/ACLED armed-conflict
+// events, and internet outages (CAIDA IODA) as CATEGORY ICONS — a bombing star,
+// crossed clash blades, a drone quad, a jamming antenna — with a label pill for
+// the prominent ones. This replaces the old "translucent red disc + text"
+// rendering the operator called garbage: an analyst reads WHAT happened from the
+// glyph. Glyph + colour dispatch lives in ./eventStyle.ts (icons in
+// ../eventIcons.ts), mirroring the aircraft/vessel styles.ts split.
 //
-// Both feeds map onto one geometry: a ground ellipse at the centroid sized by
-// the incident span (or a nominal radius for outages) + a label. Upsert by a
-// STABLE composite key (centroid+domains) because the brief mints a fresh random
-// `id` every poll — keying on it would churn every entity each refresh.
+// Upsert by a STABLE composite key (centroid+domains) because the brief mints a
+// fresh random `id` every poll — keying on it would churn every entity each
+// refresh.
 
 type AreaKind = 'incidents' | 'ioda' | 'conflict';
 
@@ -18,18 +22,11 @@ interface Area {
   key: string;
   lon: number;
   lat: number;
-  radiusKm: number;
+  glyph: EventGlyph;
   color: string;
   pulse: boolean;
   label: string;
 }
-
-// Threat level → colour. high reads as red (and pulses), elevated orange, low amber.
-const SEV_COLOR: Record<string, string> = {
-  high: '#ef4444',
-  elevated: '#f59e0b',
-  low: '#fbbf24',
-};
 
 function round(n: number, p = 2): number {
   const f = 10 ** p;
@@ -95,17 +92,20 @@ function buildAreas(kind: AreaKind, json: unknown): Area[] {
         if (root === '20') prev.root = '20';
       }
     }
-    return [...cells.entries()].map(([cellKey, v]): Area => ({
-      key: `conflict|${cellKey}`,
-      lon: v.lon,
-      lat: v.lat,
-      radiusKm: Math.min(70, 14 + v.ment * 1.2),
-      color: v.root === '20' ? '#dc2626' : '#ef4444',
-      pulse: v.ment >= 25 || v.root === '20',
-      // Only the prominent cells get a text label (keeps the map readable).
-      // strip the per-event "(Nx)" the backend baked in, show the merged total.
-      label: v.ment >= 6 ? `${v.label.replace(/\s*\(\d+x\)\s*$/, '')} (${v.ment}x)`.slice(0, 80) : '',
-    }));
+    return [...cells.entries()].map(([cellKey, v]): Area => {
+      const sym = conflictSymbol(v.label, v.root, v.ment);
+      return {
+        key: `conflict|${cellKey}`,
+        lon: v.lon,
+        lat: v.lat,
+        glyph: sym.glyph,
+        color: sym.color,
+        pulse: sym.pulse,
+        // Only the prominent cells get a text label (keeps the map readable).
+        // strip the per-event "(Nx)" the backend baked in, show the merged total.
+        label: v.ment >= 6 ? `${v.label.replace(/\s*\(\d+x\)\s*$/, '')} (${v.ment}x)`.slice(0, 80) : '',
+      };
+    });
   }
   if (kind === 'incidents') {
     const incidents = (j.incidents as Record<string, unknown>[]) ?? [];
@@ -116,14 +116,14 @@ function buildAreas(kind: AreaKind, json: unknown): Area[] {
         const level = String(inc.threat_level ?? 'low');
         const domains = (inc.domains as string[]) ?? [];
         const narrative = String(inc.narrative ?? 'incident');
-        const span = typeof inc.span_km === 'number' ? inc.span_km : 0;
+        const sym = incidentSymbol(domains, narrative, level);
         return {
           key: `${round(c.lon)}|${round(c.lat)}|${domains.join(',')}`,
           lon: c.lon,
           lat: c.lat,
-          radiusKm: Math.max(span, 8),
-          color: SEV_COLOR[level] ?? '#fbbf24',
-          pulse: level === 'high',
+          glyph: sym.glyph,
+          color: sym.color,
+          pulse: sym.pulse,
           label: `${level.toUpperCase()} · ${narrative}`.slice(0, 80),
         };
       })
@@ -135,13 +135,14 @@ function buildAreas(kind: AreaKind, json: unknown): Area[] {
     .map((it): Area | null => {
       const p = iodaPoint(it);
       if (!p) return null;
+      const sym = outageSymbol(p.score);
       return {
         key: `ioda|${round(p.lon)}|${round(p.lat)}`,
         lon: p.lon,
         lat: p.lat,
-        radiusKm: 120,
-        color: p.score >= 50 ? '#ef4444' : '#f59e0b',
-        pulse: p.score >= 50,
+        glyph: sym.glyph,
+        color: sym.color,
+        pulse: sym.pulse,
         label: `INTERNET OUTAGE · ${p.name}${p.score ? ` (${Math.round(p.score)})` : ''}`,
       };
     })
@@ -222,46 +223,41 @@ export class AreaAdapter implements LayerAdapter {
     for (const a of areas) {
       seen.add(a.key);
       if (a.pulse) this.pulsingCount++;
-      const base = Cesium.Color.fromCssColorString(a.color);
+      const image = eventIcon(a.glyph, a.color);
       const existing = this.entities.get(a.key);
-      const radius = a.radiusKm * 1000;
-      // Pulsing fill alpha for high severity; steady translucent fill otherwise.
-      const fill = a.pulse
-        ? new Cesium.ColorMaterialProperty(
-            new Cesium.CallbackProperty(() => {
-              const t = (performance.now() / 1000) * 1.6;
-              return base.withAlpha(0.14 + 0.12 * (0.5 + 0.5 * Math.sin(t)));
-            }, false),
-          )
-        : new Cesium.ColorMaterialProperty(base.withAlpha(0.18));
       if (existing) {
         existing.position = new Cesium.ConstantPositionProperty(
           Cesium.Cartesian3.fromDegrees(a.lon, a.lat),
         );
-        if (existing.ellipse) {
-          existing.ellipse.semiMajorAxis = new Cesium.ConstantProperty(radius);
-          existing.ellipse.semiMinorAxis = new Cesium.ConstantProperty(radius);
-          existing.ellipse.material = fill;
-          existing.ellipse.outlineColor = new Cesium.ConstantProperty(base);
-        }
+        if (existing.billboard) existing.billboard.image = new Cesium.ConstantProperty(image);
         if (existing.label) existing.label.text = new Cesium.ConstantProperty(a.label);
         continue;
       }
+      // High-intensity events breathe (billboard scale) instead of a pulsing
+      // disc — the eye-catch without the smear. Steady events hold scale 1.
+      const scale = a.pulse
+        ? new Cesium.CallbackProperty(() => {
+            const t = (performance.now() / 1000) * 1.6;
+            return 0.95 + 0.22 * (0.5 + 0.5 * Math.sin(t));
+          }, false)
+        : 1.0;
       const opts: Cesium.Entity.ConstructorOptions = {
         id: a.key,
         position: Cesium.Cartesian3.fromDegrees(a.lon, a.lat),
-        ellipse: {
-          semiMajorAxis: radius,
-          semiMinorAxis: radius,
-          material: fill,
-          outline: true,
-          outlineColor: base,
-          outlineWidth: 2,
-          height: 0,
+        billboard: {
+          image,
+          scale,
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          // Shrink with distance so a global view isn't a wall of glyphs, but
+          // never below 0.5 so they stay recognisable. Depth-test disabled so a
+          // ground event isn't clipped by terrain at a shallow camera angle.
+          scaleByDistance: new Cesium.NearFarScalar(3.0e5, 1.0, 1.2e7, 0.5),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       };
-      // Only label when there is text (low-intensity conflict cells render as a
-      // bare disc so the map doesn't smear).
+      // Label only the prominent events (low-intensity cells stay a bare glyph
+      // so the map doesn't smear into a wall of text).
       if (a.label) {
         opts.label = {
           text: a.label,
@@ -272,12 +268,10 @@ export class AreaAdapter implements LayerAdapter {
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           showBackground: true,
           backgroundColor: Cesium.Color.fromCssColorString('#05070b').withAlpha(0.7),
-          pixelOffset: new Cesium.Cartesian2(0, -14),
+          pixelOffset: new Cesium.Cartesian2(0, -16),
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           translucencyByDistance: new Cesium.NearFarScalar(2.0e6, 1.0, 2.0e7, 0.0),
-          // Depth-tested (no disableDepthTestDistance) so the globe OCCLUDES a
-          // conflict label on the far side instead of it bleeding through.
         };
       }
       const ent = this.ds.entities.add(opts);
