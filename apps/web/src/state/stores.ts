@@ -27,6 +27,18 @@ export const useFeeds = create<FeedsState>((set) => ({
     })),
 }));
 
+// Stable signature of only feed STATUSES (not lastSeen/note, which change on
+// every poll heartbeat). Subscribe to this — `useFeeds((s) => feedStatusSignature(s.feeds))`
+// — so a component re-renders when a dot/health could actually change, not once
+// per second per feed. Read the full map via useFeeds.getState().feeds inside a
+// memo keyed on the signature. Shared by the layer rail + map-health chrome.
+export function feedStatusSignature(feeds: Record<string, FeedHealth>): string {
+  return Object.entries(feeds)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, f]) => `${k}:${f.status}`)
+    .join('|');
+}
+
 interface SelectionState {
   selectedEntityId: string | null;
   select: (id: string | null) => void;
