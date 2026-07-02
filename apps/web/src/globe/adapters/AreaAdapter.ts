@@ -250,10 +250,10 @@ export class AreaAdapter implements LayerAdapter {
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
           // Shrink with distance so a global view isn't a wall of glyphs, but
-          // never below 0.5 so they stay recognisable. Depth-test disabled so a
-          // ground event isn't clipped by terrain at a shallow camera angle.
+          // never below 0.5 so they stay recognisable. Depth-TESTED (no
+          // disableDepthTestDistance) so the globe OCCLUDES an event on the far
+          // side instead of it bleeding through — matches the label behaviour.
           scaleByDistance: new Cesium.NearFarScalar(3.0e5, 1.0, 1.2e7, 0.5),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       };
       // Label only the prominent events (low-intensity cells stay a bare glyph
