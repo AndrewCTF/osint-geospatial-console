@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # ── third-party secrets (NEVER exposed) ──
     opensky_client_id: str = ""
     opensky_client_secret: str = ""
+    # Kill switch for the OpenSky breadth tier (env OPENSKY_ENABLED=0). When off,
+    # `_opensky_cached` serves nothing and never kicks a pull — the snapshot rides
+    # the sidecar + feeds + grid alone. Left ON by default; disable temporarily
+    # without ripping out the OpenSky code path.
+    opensky_enabled: bool = True
     aisstream_key: str = ""
     # When true AND aisstream_key is set, run the AISStream upstream ALWAYS-ON
     # (global vessel firehose) from boot, instead of only while a browser holds
@@ -170,7 +175,27 @@ class Settings(BaseSettings):
     # spending the calling agent's context. All optional; degrade gracefully.
     ollama_host: str = "http://localhost:11434"  # OLLAMA_HOST
     ollama_model: str = ""  # OLLAMA_MODEL ("" → auto-detect smallest installed)
+    # Per-tier local model ids used when running inference locally (Part 4). The
+    # auto-picker (llm._pick_ollama) biases to TINY models — right for a last-resort
+    # fallback, wrong when local is PRIMARY — so name the capable model per tier.
+    # "" → fall back to ollama_model → auto-pick.
+    ollama_model_fast: str = ""  # OLLAMA_MODEL_FAST (tool/JSON tier, e.g. qwen3-coder:30b-a3b)
+    ollama_model_reason: str = ""  # OLLAMA_MODEL_REASON (deep tier, e.g. qwen3.6)
+    # Prefer the local Ollama model FIRST, ahead of MiniMax/DeepSeek, to dodge cloud
+    # rate limits when the operator has a capable local GPU. OFF by default so
+    # hosted/cloud behaviour is unchanged; flipped at runtime via POST /api/ai/local
+    # (the desktop build turns it on when a tool-capable model is present).
+    llm_prefer_local: bool = False  # LLM_PREFER_LOCAL
     api_base: str = "http://localhost:8000"  # API_BASE (MCP → backend)
+
+    # ── Human-in-the-loop action approval (HITL gate) ──
+    # When ON (default), the intel agent's write-back actions become PROPOSALS the
+    # operator approves/rejects in AgentConsole instead of dispatching directly.
+    # An action whose model-reported confidence >= action_auto_threshold auto-runs
+    # (default 1.01 = never auto — a safe AIP-style knob; set below 1 to auto-execute
+    # high-confidence writes). Set ACTION_APPROVAL=0 to restore direct dispatch.
+    action_approval: bool = True  # ACTION_APPROVAL
+    action_auto_threshold: float = 1.01  # ACTION_AUTO_THRESHOLD (1.01 = never auto)
 
     # ── MiniMax-M3 via NVIDIA NIM (OpenAI-compatible) — PRIMARY reasoning backend ──
     # The analytical tools prefer MiniMax-M3 (a reasoning model) hosted on

@@ -67,6 +67,15 @@ interface TraceRow {
   action?: { name: string; targetId?: string; ok: boolean; error?: string };
   // A focused question the agent asked back; the loop pauses for the operator.
   clarification?: { question: string; options: string[] };
+  // A write-back QUEUED for operator approval (HITL gate). The operator
+  // approves/rejects it here; approval executes the audited action.
+  proposal?: {
+    id: string;
+    action: string;
+    params: Record<string, unknown>;
+    confidence: number;
+    state: 'pending' | 'approved' | 'rejected' | 'error';
+  };
 }
 
 // Payload of an `app_var` SSE event — the agent driving the operator's map.
@@ -211,6 +220,23 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
         setTrace((t) => [...t, { id: 3000 + t.length, status: 'ok', action }]);
         break;
       }
+      case 'action_proposal':
+        // A write-back was QUEUED for operator approval instead of executing.
+        setTrace((t) => [
+          ...t,
+          {
+            id: 5000 + t.length,
+            status: 'ok',
+            proposal: {
+              id: String(ev['proposal_id'] ?? ''),
+              action: String(ev['action'] ?? ''),
+              params: (ev['params'] ?? {}) as Record<string, unknown>,
+              confidence: Number(ev['confidence'] ?? 0),
+              state: 'pending',
+            },
+          },
+        ]);
+        break;
       case 'clarification':
         setTrace((t) => [
           ...t,
@@ -351,6 +377,29 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
     if (isMobile) setOpen(false);
   };
 
+  // Approve/reject a queued write-back proposal (HITL gate). Approve executes
+  // the audited action server-side; both mark the row's state for the operator.
+  const decide = async (pid: string, verb: 'approve' | 'reject'): Promise<void> => {
+    try {
+      await apiFetch(`/api/actions/proposals/${pid}/${verb}`, { method: 'POST' });
+      setTrace((prev) =>
+        prev.map((r) =>
+          r.proposal && r.proposal.id === pid
+            ? { ...r, proposal: { ...r.proposal, state: verb === 'approve' ? 'approved' : 'rejected' } }
+            : r,
+        ),
+      );
+    } catch {
+      setTrace((prev) =>
+        prev.map((r) =>
+          r.proposal && r.proposal.id === pid
+            ? { ...r, proposal: { ...r.proposal, state: 'error' } }
+            : r,
+        ),
+      );
+    }
+  };
+
   const greenFeeds = Object.values(feeds).filter((f) => f.status === 'green').length;
   const totalFeeds = Object.values(feeds).length;
   const worstSev = alerts.some((a) => a.severity === 'critical' || a.severity === 'high')
@@ -398,16 +447,16 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
         <div className="flex items-center gap-2.5 px-2.5 py-2 border-b border-line-2 bg-bg-1 shrink-0">
           <span className="mono text-accent text-[11px]">▸</span>
           <span className="mono text-[11px] tracking-[1px] text-txt-1">ANALYST</span>
-          <span className="mono text-[8.5px] tracking-[0.6px] uppercase text-[#9cc2ff] border border-accent-line bg-accent-dim rounded-sm px-1.5 py-px">
+          <span className="mono text-[10px] tracking-[0.6px] uppercase text-[#9cc2ff] border border-accent-line bg-accent-dim rounded-sm px-1.5 py-px">
             {phase === 'gathering' ? 'tool loop' : phase === 'synthesizing' ? 'reasoning' : phase === 'done' ? 'plan mode' : 'analyst'}
           </span>
           {meta?.model && (
-            <span className="mono text-[8.5px] text-txt-3 border border-line rounded-sm px-1.5 py-px" title={`backend: ${meta.backend}`}>
+            <span className="mono text-[10px] text-txt-3 border border-line rounded-sm px-1.5 py-px" title={`backend: ${meta.backend}`}>
               {String(meta.model).split('/').pop()}
             </span>
           )}
           <div className="flex-1" />
-          <span className="flex items-center gap-1.5 mono text-[9px] tracking-[0.4px] text-accent">
+          <span className="flex items-center gap-1.5 mono text-[10px] tracking-[0.4px] text-accent">
             <StatusDot tone={running ? 'amber' : error ? 'red' : 'ok'} />
             {running
               ? `${phase === 'synthesizing' ? 'reasoning' : 'gathering'} · ${elapsed}s`
@@ -481,10 +530,10 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
                       <span className="mono text-txt-3"> → {r.action.targetId}</span>
                     )}
                     {r.action.error && (
-                      <div className="text-[9.5px] text-[#ffc9c5] mt-0.5">{r.action.error}</div>
+                      <div className="text-[10px] text-[#ffc9c5] mt-0.5">{r.action.error}</div>
                     )}
                     {r.action.ok && (
-                      <span className="mono text-[8.5px] text-txt-4 ml-1.5">audited · logged</span>
+                      <span className="mono text-[10px] text-txt-4 ml-1.5">audited · logged</span>
                     )}
                   </div>
                 ) : r.clarification !== undefined ? (
@@ -495,7 +544,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
                     className="rounded-sm my-1 px-3 py-2 text-[11px] leading-[1.5]"
                     style={{ border: '1px solid var(--accent-line)', background: 'var(--accent-dim)' }}
                   >
-                    <div className="mono text-[8.5px] tracking-[0.7px] uppercase text-[#9cc2ff] mb-1">
+                    <div className="mono text-[10px] tracking-[0.7px] uppercase text-[#9cc2ff] mb-1">
                       ? clarification needed
                     </div>
                     <div className="text-txt-1">{r.clarification.question}</div>
@@ -514,6 +563,56 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
                       </div>
                     )}
                   </div>
+                ) : r.proposal !== undefined ? (
+                  // A write-back QUEUED for operator approval (HITL gate). Approve
+                  // executes the audited action; Reject drops it. Same rule/verb
+                  // styling as an action row so it reads as a governed write.
+                  <div
+                    key={r.id}
+                    className="rounded-sm my-1 px-2.5 py-1.5 text-[10.5px] leading-[1.5]"
+                    style={{
+                      border: '1px solid rgba(245,165,36,0.35)',
+                      background: 'linear-gradient(180deg, rgba(245,165,36,0.06), transparent)',
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="mono text-[#fcd9a0]">⏸ proposed · {r.proposal.action}</span>
+                      <span className="mono text-[10px] text-txt-4">conf {r.proposal.confidence.toFixed(2)}</span>
+                      {r.proposal.state === 'pending' ? (
+                        <span className="flex gap-1.5 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => void decide(r.proposal!.id, 'approve')}
+                            className="mono text-[10px] text-[#fcd9a0] border border-accent-line rounded-sm px-2 py-0.5 hover:text-accent hover:border-accent"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void decide(r.proposal!.id, 'reject')}
+                            className="mono text-[10px] text-[#ffc9c5] border border-line rounded-sm px-2 py-0.5 hover:border-[rgba(255,90,82,0.5)]"
+                          >
+                            Reject
+                          </button>
+                        </span>
+                      ) : (
+                        <span
+                          className={`mono text-[10px] ml-auto ${
+                            r.proposal.state === 'approved'
+                              ? 'text-ok'
+                              : r.proposal.state === 'error'
+                                ? 'text-[#ffc9c5]'
+                                : 'text-txt-3'
+                          }`}
+                        >
+                          {r.proposal.state}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mono text-[10px] text-txt-3 mt-0.5 break-all">
+                      {JSON.stringify(r.proposal.params)}
+                    </div>
+                  </div>
                 ) : (
                   <div key={`${r.id}-${r.tool}`} className="text-[10.5px] leading-[1.5]">
                     <div className="grid items-baseline gap-2" style={{ gridTemplateColumns: '14px 1fr auto' }}>
@@ -524,11 +623,11 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
                         {r.tool}
                         <span className="text-txt-4">({argStr(r.args)})</span>
                       </span>
-                      <span className="mono text-[9px] text-txt-3 whitespace-nowrap">
+                      <span className="mono text-[10px] text-txt-3 whitespace-nowrap">
                         {r.status === 'ok' ? `${r.summary ?? ''}${r.ms != null ? ` · ${r.ms}ms` : ''}` : '…'}
                       </span>
                     </div>
-                    {r.thought && <div className="pl-[22px] text-[9.5px] text-txt-3 italic">{r.thought}</div>}
+                    {r.thought && <div className="pl-[22px] text-[10px] text-txt-3 italic">{r.thought}</div>}
                   </div>
                 ),
               )}
@@ -559,9 +658,9 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
                 >
                   <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-warn" />
                   <div className="flex items-center gap-2 mb-1.5">
-                    <span className="mono text-[9px] tracking-[0.7px] uppercase text-[#fcd9a0]">⚡ Detection proposed</span>
+                    <span className="mono text-[10px] tracking-[0.7px] uppercase text-[#fcd9a0]">⚡ Detection proposed</span>
                     {result.recommended_detection.scope && (
-                      <span className="mono text-[8px] tracking-[0.5px] uppercase text-txt-3 ml-auto truncate max-w-[55%]" title={result.recommended_detection.scope}>
+                      <span className="mono text-[10px] tracking-[0.5px] uppercase text-txt-3 ml-auto truncate max-w-[55%]" title={result.recommended_detection.scope}>
                         {result.recommended_detection.scope}
                       </span>
                     )}
@@ -577,7 +676,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
 
               {result.findings && result.findings.length > 0 && (
                 <>
-                  <div className="mono text-[8.5px] tracking-[0.7px] uppercase text-txt-4 mt-3 mb-1.5">
+                  <div className="mono text-[10px] tracking-[0.7px] uppercase text-txt-4 mt-3 mb-1.5">
                     findings · cited incidents · {result.findings.length}
                   </div>
                   <div className="flex flex-col">
@@ -591,7 +690,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
                         className="grid items-baseline gap-2 py-1.5 text-left border-b border-[rgba(255,255,255,0.035)] hover:bg-bg-2/50 disabled:cursor-default"
                         style={{ gridTemplateColumns: 'auto 1fr auto' }}
                       >
-                        <span className="mono text-[9px] text-txt-3">{f.id.slice(0, 8)}</span>
+                        <span className="mono text-[10px] text-txt-3">{f.id.slice(0, 8)}</span>
                         <span className="text-[10.5px] text-txt-1">
                           <span className="text-txt-0">{f.label}</span>
                           {f.why && <span className="text-txt-3"> — {f.why}</span>}
@@ -605,7 +704,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
 
               {result.follow_up && result.follow_up.length > 0 && (
                 <>
-                  <div className="mono text-[8.5px] tracking-[0.7px] uppercase text-txt-4 mt-3 mb-1.5">next steps</div>
+                  <div className="mono text-[10px] tracking-[0.7px] uppercase text-txt-4 mt-3 mb-1.5">next steps</div>
                   <ul className="flex flex-col gap-1">
                     {result.follow_up.map((s, i) => (
                       <li key={i} className="flex gap-2 text-[10.5px] text-txt-1 leading-[1.45]">
@@ -618,7 +717,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
               )}
 
               {result.derived && (
-                <div className="mono text-[8.5px] text-txt-4 mt-3">
+                <div className="mono text-[10px] text-txt-4 mt-3">
                   synthesised from the brief (the reasoning model did not return a clean final) — findings are the fused incidents.
                 </div>
               )}
@@ -629,7 +728,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
 
       {/* ── cost / governance bar ── */}
       {(expanded || isMobile) && meta && (
-        <div className="flex items-center gap-3 px-3 py-1.5 border-t border-line bg-bg-1 mono text-[8.5px] tracking-[0.3px] text-txt-4 shrink-0 flex-wrap">
+        <div className="flex items-center gap-3 px-3 py-1.5 border-t border-line bg-bg-1 mono text-[10px] tracking-[0.3px] text-txt-4 shrink-0 flex-wrap">
           <span>backend <b className="text-txt-2 font-medium">{meta.backend ?? '—'}</b></span>
           {meta.usage?.total_tokens != null && (
             <span>
@@ -649,15 +748,15 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
       {/* ── standing pills (desktop) ── */}
       {!isMobile && (
         <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-line overflow-hidden shrink-0">
-          <span className="mono text-[8px] tracking-[0.6px] uppercase text-txt-4">Standing</span>
-          <span className="flex items-center gap-1.5 mono text-[9px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
+          <span className="mono text-[10px] tracking-[0.6px] uppercase text-txt-4">Standing</span>
+          <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
             <StatusDot tone={worstSev} />alerts <b className="text-txt-1 font-medium">{alerts.length}</b>
           </span>
-          <span className="flex items-center gap-1.5 mono text-[9px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
+          <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
             AOI <b className="text-txt-1 font-medium">{activeAoi ? activeAoi.name : 'global'}</b>
           </span>
           {totalFeeds > 0 && (
-            <span className="flex items-center gap-1.5 mono text-[9px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
+            <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
               <StatusDot tone={greenFeeds === totalFeeds ? 'green' : 'amber'} />feeds{' '}
               <b className="text-txt-1 font-medium">{greenFeeds}/{totalFeeds}</b>
             </span>
@@ -686,12 +785,12 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
         ) : (
           <Btn size="sm" tone="accent" onClick={() => void run(q)}>↵ run</Btn>
         )}
-        <span className="mono text-[9px] text-txt-3 border border-line-2 rounded-sm px-1.5 py-px">⌘J</span>
+        <span className="mono text-[10px] text-txt-3 border border-line-2 rounded-sm px-1.5 py-px">⌘J</span>
       </div>
 
       {/* ── slash hints (resting desktop only) ── */}
       {!expanded && !isMobile && (
-        <div className="flex gap-3 px-3 pb-2 -mt-0.5 mono text-[9px] tracking-[0.4px] text-txt-4">
+        <div className="flex gap-3 px-3 pb-2 -mt-0.5 mono text-[10px] tracking-[0.4px] text-txt-4">
           {SLASH.map((s) => (
             <button
               key={s}

@@ -347,6 +347,11 @@ def _tool_catalog(*, with_actions: bool) -> str:
     lines += [f"- {name}: {desc}" for name, desc in CONTROL_TOOLS.items()]
     if with_actions:
         lines += [f"- {name}: {desc}" for name, desc in _ACTION_DESCRIPTIONS.items()]
+        lines.append(
+            "  (every AUDITED write-back also accepts an optional confidence(number "
+            "0-1) — your confidence this action is correct; low/absent → the action "
+            "is queued for operator approval rather than executed immediately.)"
+        )
     return "\n".join(lines)
 
 
@@ -749,6 +754,34 @@ async def run_agent(
                     yield {
                         "type": "tool_result", "step": step, "tool": name,
                         "ms": 0, "summary": obs["error"],
+                    }
+                    messages.append(
+                        {"role": "user", "content": f"OBSERVATION ({name}): {json.dumps(obs)}"}
+                    )
+                    continue
+                # ── HITL gate: unless the model is confident enough to auto-run,
+                # queue the write-back as a PROPOSAL for the operator to approve /
+                # reject in AgentConsole (approval re-dispatches the SAME audited
+                # path below). Default threshold 1.01 → always propose.
+                from app.config import get_settings  # noqa: PLC0415
+                from app.routes.actions import propose  # noqa: PLC0415
+
+                _s = get_settings()
+                confidence = float(args.pop("confidence", 0.0) or 0.0)
+                if _s.action_approval and confidence < _s.action_auto_threshold:
+                    pid = propose(name, args, ctx, confidence=confidence)
+                    yield {
+                        "type": "action_proposal", "step": step,
+                        "proposal_id": pid, "action": name,
+                        "params": args, "confidence": confidence,
+                    }
+                    obs = {
+                        "queued": True, "proposal_id": pid,
+                        "note": "action queued for operator approval; do not retry",
+                    }
+                    yield {
+                        "type": "tool_result", "step": step, "tool": name,
+                        "ms": 0, "summary": f"{name} queued for approval ({pid})",
                     }
                     messages.append(
                         {"role": "user", "content": f"OBSERVATION ({name}): {json.dumps(obs)}"}
