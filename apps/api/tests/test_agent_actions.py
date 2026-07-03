@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from app.config import get_settings
 from app.intel import agent
 from app.intel.actions import ActionResult
 from app.intel.geo import BBox
@@ -196,6 +197,10 @@ def test_action_tool_dispatches_and_emits_action_event(monkeypatch: pytest.Monke
         )
 
     monkeypatch.setattr(agent.actions, "dispatch", fake_dispatch)
+    # Approval is ON by default (HITL gate); this test proves the DIRECT-dispatch
+    # path, so disable the gate (== ACTION_APPROVAL=false). The proposal path is
+    # covered by test_action_proposals.py.
+    monkeypatch.setattr(get_settings(), "action_approval", False)
 
     events = asyncio.run(_drain("flag aircraft abc as loitering", None, UserCtx("u1", "tok")))
 
@@ -237,6 +242,9 @@ def test_action_failure_is_reported_not_crashing(monkeypatch: pytest.MonkeyPatch
         raise HTTPException(status_code=503, detail="Supabase is not configured")
 
     monkeypatch.setattr(agent.actions, "dispatch", boom)
+    # DIRECT-dispatch path (approval gate off); the proposal path is covered by
+    # test_action_proposals.py.
+    monkeypatch.setattr(get_settings(), "action_approval", False)
 
     events = asyncio.run(_drain("nominate vessel 1", None, UserCtx("u1", "tok")))
     fail = [e for e in events if e["type"] == "action" and e["ok"] is False]
