@@ -12,6 +12,7 @@ import { useSettings } from './state/settings.js';
 import { VelocityNewsPage } from './news/VelocityNewsPage.js';
 import { StoryView } from './news/StoryView.js';
 import { Onboarding, hasOnboarded } from './onboarding/Onboarding.js';
+import { isSupabaseConfigured } from './transport/supabase.js';
 
 // Served under the Vite base path (e.g. "/app" in production, "/" in dev), so
 // the router's basename tracks it — keeps client routes correct behind /app.
@@ -123,6 +124,9 @@ function OnboardingGate(): JSX.Element | null {
 
 function AccountChip(): JSX.Element | null {
   const { user, loading, signOut } = useAuth();
+  // Local / self-host build: no Supabase env → auth is disabled, so there's
+  // nothing to sign into. Hide the chip entirely (no "Sign in" link).
+  if (!isSupabaseConfigured) return null;
   if (loading) return null;
   if (!user) {
     return (
