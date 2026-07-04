@@ -13,8 +13,7 @@ import { reasonSim, type SimReasonResult } from './reason.js';
 import { linkProfileFor } from './links.js';
 import type { Jammer, JammerKind } from './ew.js';
 import { apiFetch } from '../transport/http.js';
-import { flyToPosition } from '../globe/camera.js';
-import { viewerCenter } from '../globe/center.js';
+import { CoordEntry } from '../globe/CoordEntry.js';
 import type { LatLon, Scenario, ScenarioKind } from './types.js';
 
 // Control-link archetypes a swarm can use (attack derives link from the system).
@@ -147,8 +146,7 @@ export function SimulationOverlay({
   const [jamRadiusKm, setJamRadiusKm] = useState(25);
   const [liveJamLoading, setLiveJamLoading] = useState(false);
   const [placing, setPlacing] = useState<'A' | 'B' | 'JAM' | null>(null);
-  const [coordLat, setCoordLat] = useState('');
-  const [coordLon, setCoordLon] = useState('');
+  const [jamKind, setJamKind] = useState<JammerKind>('comms');
   const [clock, setClock] = useState<SimClock>({ simTime: 0, duration: 0, playing: false });
   const [raid, setRaid] = useState<RaidResult | null>(null);
   const [econ, setEcon] = useState<EconImpact | null>(null);
@@ -204,37 +202,26 @@ export function SimulationOverlay({
     });
   };
 
+  // Drop a jammer at an EXPLICIT point. Both the typed CoordEntry and the
+  // click-to-place path resolve to this, so a jammer object is built the same
+  // way either way. Functional setState keeps the id/index correct under rapid
+  // drops. No SimController involvement — the overlay owns the jammer list.
+  const addJammerAt = (kind: JammerKind, lat: number, lon: number) => {
+    setJammers((js) => [
+      ...js,
+      { id: `jam:${js.length}:${Math.round(lat * 100)}:${Math.round(lon * 100)}`, lat, lon, radiusKm: jamRadiusKm, kind },
+    ]);
+  };
+
+  // Click-to-place a jammer: arm the one-shot globe pick, then drop via addJammerAt.
   const addJammer = (kind: JammerKind) => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     setPlacing('JAM');
     ctrl.beginPlace((p) => {
-      setJammers((js) => [
-        ...js,
-        { id: `jam:${js.length}:${Math.round(p.lat * 100)}:${Math.round(p.lon * 100)}`, lat: p.lat, lon: p.lon, radiusKm: jamRadiusKm, kind },
-      ]);
+      addJammerAt(kind, p.lat, p.lon);
       setPlacing(null);
     });
-  };
-
-  // Fill the currently-armed role (A / B / jammer) from the typed lat/lon
-  // instead of a globe click. `placeAt` resolves the SAME one-shot callback
-  // `beginPlace` armed, so this routes to setPtA/setPtB/addJammer exactly like a
-  // click — then flies the camera there so the placement is visible.
-  const applyCoords = () => {
-    const ctrl = ctrlRef.current;
-    if (!ctrl) return;
-    const p = parseLatLon(coordLat, coordLon);
-    if (!p) return;
-    if (!ctrl.placeAt(p.lat, p.lon)) return; // nothing armed
-    if (viewer && !viewer.isDestroyed()) flyToPosition(viewer, p.lon, p.lat, 400_000, 0.8);
-  };
-
-  const fillFromCenter = () => {
-    const c = viewerCenter(viewer);
-    if (!c) return;
-    setCoordLat(c.lat.toFixed(4));
-    setCoordLon(c.lon.toFixed(4));
   };
 
   const pullLiveJamming = async () => {
@@ -344,8 +331,6 @@ export function SimulationOverlay({
   const labelA = isSwarm || isAttack ? 'Launch' : 'Approach';
   const labelB = isSwarm || isAttack ? 'Target' : 'Pad';
   const ready = ptA != null && ptB != null;
-  const coordParsed = parseLatLon(coordLat, coordLon);
-  const armedLabel = placing === 'A' ? labelA : placing === 'B' ? labelB : placing === 'JAM' ? 'jammer' : null;
 
   return (
     <div className="absolute top-12 left-3 md:left-[304px] z-[1400] w-[300px] max-h-[calc(100%-6rem)] overflow-y-auto pointer-events-auto space-y-2.5 rounded-md border border-line bg-bg-0/90 backdrop-blur-sm p-2 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.85)]">
@@ -378,74 +363,43 @@ export function SimulationOverlay({
           ))}
         </div>
 
-        <KV>
-          <KVRow
-            k={labelA}
-            v={
-              <button
-                className={`mono ${placing === 'A' ? 'text-accent' : 'text-txt-1'} hover:text-accent`}
-                onClick={() => beginPlace('A')}
-              >
-                {placing === 'A' ? '… click map' : fmtPt(ptA)}
-              </button>
-            }
-          />
-          <KVRow
-            k={labelB}
-            v={
-              <button
-                className={`mono ${placing === 'B' ? 'text-accent' : 'text-txt-1'} hover:text-accent`}
-                onClick={() => beginPlace('B')}
-              >
-                {placing === 'B' ? '… click map' : fmtPt(ptB)}
-              </button>
-            }
-          />
-        </KV>
-
-        {/* Place by coordinates — fill the currently-armed role (Launch /
-            Target / a jammer) without clicking the globe. The LAT box also
-            accepts a pasted "lat, lon" pair. */}
-        <div className="mt-2 pt-2 border-t border-line">
-          <SectionLabel title="Place by coordinates" />
-          <div className="grid grid-cols-2 gap-2 mt-1">
-            <label className="block">
-              <MicroLabel>lat</MicroLabel>
-              <input
-                value={coordLat}
-                onChange={(e) => setCoordLat(e.target.value)}
-                placeholder="51.9"
-                inputMode="decimal"
-                className="mono mt-0.5 w-full bg-bg-2 border border-line rounded-sm px-2 py-1 text-[11px] text-txt-0 focus:outline-none focus:border-accent-line"
-              />
-            </label>
-            <label className="block">
-              <MicroLabel>lon</MicroLabel>
-              <input
-                value={coordLon}
-                onChange={(e) => setCoordLon(e.target.value)}
-                placeholder="4.4"
-                inputMode="decimal"
-                className="mono mt-0.5 w-full bg-bg-2 border border-line rounded-sm px-2 py-1 text-[11px] text-txt-0 focus:outline-none focus:border-accent-line"
-              />
-            </label>
-          </div>
-          <div className="flex items-center gap-1.5 mt-2">
-            <Btn
-              size="sm"
-              onClick={applyCoords}
-              disabled={!placing || !coordParsed}
-              className={placing ? 'border-accent-line text-accent' : ''}
+        {/* Launch + Target each own an always-visible coordinate field: type
+            "lat,lon" or a place / airport / port name, use the ⌖ map-centre
+            button, or click the map. No arming step — one field per point. */}
+        <div className="space-y-2.5">
+          <div>
+            <div className="flex items-baseline justify-between">
+              <SectionLabel title={labelA} />
+              <span className="mono text-[10px] text-txt-1 tabular-nums">{fmtPt(ptA)}</span>
+            </div>
+            <div className="mt-1">
+              <CoordEntry viewer={viewer} onPlace={(lat, lon) => setPtA({ lat, lon })} placeholder="lat,lon or place" />
+            </div>
+            <button
+              type="button"
+              className={`mono text-[10px] mt-0.5 ${placing === 'A' ? 'text-accent' : 'text-txt-3'} hover:text-accent`}
+              onClick={() => beginPlace('A')}
             >
-              {armedLabel ? `Set ${armedLabel}` : 'Set point'}
-            </Btn>
-            <Btn size="sm" onClick={fillFromCenter} title="Fill from the centre of the current view">
-              use map centre
-            </Btn>
+              {placing === 'A' ? '… click map' : 'or click map'}
+            </button>
           </div>
-          <MicroLabel className="block mt-1">
-            {placing ? `applies to ${armedLabel} · or paste "lat, lon"` : 'arm Launch / Target / a jammer, then Set'}
-          </MicroLabel>
+
+          <div>
+            <div className="flex items-baseline justify-between">
+              <SectionLabel title={labelB} />
+              <span className="mono text-[10px] text-txt-1 tabular-nums">{fmtPt(ptB)}</span>
+            </div>
+            <div className="mt-1">
+              <CoordEntry viewer={viewer} onPlace={(lat, lon) => setPtB({ lat, lon })} placeholder="lat,lon or place" />
+            </div>
+            <button
+              type="button"
+              className={`mono text-[10px] mt-0.5 ${placing === 'B' ? 'text-accent' : 'text-txt-3'} hover:text-accent`}
+              onClick={() => beginPlace('B')}
+            >
+              {placing === 'B' ? '… click map' : 'or click map'}
+            </button>
+          </div>
         </div>
       </Widget>
 
@@ -521,12 +475,40 @@ export function SimulationOverlay({
           <MicroLabel className="block">terrain-follow + LOS masking (needs 3D terrain)</MicroLabel>
 
           <Slider label="Jammer radius" value={jamRadiusKm} min={5} max={120} step={5} unit=" km" onChange={setJamRadiusKm} />
+
+          {/* Jammer — its own always-visible coordinate field. Pick a band, then
+              type "lat,lon" / a place or use ⌖; each entry drops a jammer. */}
+          <div className="flex items-center gap-1.5">
+            <SectionLabel title="Jammer" />
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => setJamKind('comms')}
+                className={`mono text-[10px] px-1.5 py-0.5 border rounded-sm ${jamKind === 'comms' ? 'border-accent-line text-accent' : 'border-line text-txt-3 hover:text-txt-1'}`}
+              >
+                comms
+              </button>
+              <button
+                type="button"
+                onClick={() => setJamKind('gnss')}
+                className={`mono text-[10px] px-1.5 py-0.5 border rounded-sm ${jamKind === 'gnss' ? 'border-accent-line text-accent' : 'border-line text-txt-3 hover:text-txt-1'}`}
+              >
+                GNSS
+              </button>
+            </div>
+          </div>
+          <CoordEntry
+            viewer={viewer}
+            onPlace={(lat, lon) => addJammerAt(jamKind, lat, lon)}
+            placeholder={`drop ${jamKind} jammer: lat,lon or place`}
+          />
+
           <div className="flex flex-wrap gap-1.5">
             <Btn size="sm" onClick={() => addJammer('comms')} className={placing === 'JAM' ? 'border-accent-line text-accent' : ''}>
-              + comms jam
+              + comms (click map)
             </Btn>
             <Btn size="sm" onClick={() => addJammer('gnss')}>
-              + GNSS jam
+              + GNSS (click map)
             </Btn>
             <Btn size="sm" onClick={() => void pullLiveJamming()} disabled={liveJamLoading}>
               {liveJamLoading ? '…' : 'live GPS jam'}

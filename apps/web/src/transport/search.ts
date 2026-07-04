@@ -85,6 +85,9 @@ export interface ObjectFacets {
   bbox?: [number, number, number, number];
   /** Rolling window in seconds (o.t >= now - sinceS). */
   sinceS?: number;
+  /** Absolute static range — epoch seconds. Sent as start_s/end_s (inclusive). */
+  startS?: number;
+  endS?: number;
   limit?: number;
 }
 
@@ -102,6 +105,8 @@ export async function searchObjects(
     p.set('max_lat', String(f.bbox[3]));
   }
   if (f.sinceS != null) p.set('since_s', String(Math.round(f.sinceS)));
+  if (f.startS != null) p.set('start_s', String(Math.round(f.startS)));
+  if (f.endS != null) p.set('end_s', String(Math.round(f.endS)));
   if (f.limit != null) p.set('limit', String(f.limit));
   const r = await apiFetch(`/api/search/objects?${p.toString()}`, signal ? { signal } : {});
   if (!r.ok) return { results: [], count: 0, by_type: {} };

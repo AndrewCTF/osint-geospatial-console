@@ -3,28 +3,40 @@ import * as Cesium from 'cesium';
 import { useUiMode, type UiMode } from './state/uiMode.js';
 import type { RuntimeConfig } from '@osint/shared';
 import { ConsoleShell } from './shell/ConsoleShell.js';
-import { TabbedPanel, type TabDef } from './shell/TabbedPanel.js';
+import { type TabDef } from './shell/TabbedPanel.js';
+import { LeftIconRail, type RailItem } from './shell/LeftIconRail.js';
+import { AppSurface } from './shell/AppSurface.js';
+import { useAppView } from './state/appView.js';
+import { useGeoScope } from './state/geoScope.js';
+import { useDashboardMode } from './state/dashboardMode.js';
 import { CommandBar } from './command-bar/CommandBar.js';
 import {
   useImagery,
   useFeeds,
   useSelection,
   useFilters,
+  useAlerts,
   type FilterClause,
 } from './state/stores.js';
+import { useInbox } from './state/inbox.js';
+import { InboxPanel } from './inbox/InboxPanel.js';
+import { startSavedSearchPoller } from './state/savedSearches.js';
 import { LayerRail } from './layer-rail/LayerRail.js';
+import { LayerCatalog } from './layer-rail/LayerCatalog.js';
 import { OpsPanel } from './layer-rail/OpsPanel.js';
 import { ImageryControl } from './imagery/ImageryControl.js';
 import { ChokepointsList } from './layer-rail/ChokepointsList.js';
 import { FeedsPanel } from './layer-rail/FeedsPanel.js';
 import { AcarsPanel } from './acars/AcarsPanel.js';
 import { EntityPanel } from './entity-panel/EntityPanel.js';
+import { ObjectInspector } from './entity-panel/ObjectInspector.js';
 import { IntelPanel } from './entity-panel/IntelPanel.js';
 import { InvestigationCanvas } from './graph/InvestigationCanvas.js';
 import { useInvestigation } from './graph/investigationStore.js';
 import { ExtractPanel } from './extract/ExtractPanel.js';
 import { CollabPanel } from './collab/CollabPanel.js';
 import { HistogramPanel } from './explorer/HistogramPanel.js';
+import { SearchObjectsSidebar } from './explorer/SearchObjectsSidebar.js';
 import { NewsPanel } from './news-panel/NewsPanel.js';
 import { TaskingPanel } from './tasking/TaskingPanel.js';
 import { TargetKanbanPanel } from './target-kanban/TargetKanbanPanel.js';
@@ -38,7 +50,6 @@ import { LayerRegistry } from './registry/LayerRegistry.js';
 import { registerDefaults } from './registry/defaults.js';
 import { CopEditor } from './cop/CopEditor.js';
 import { Omnibar } from './command-bar/Omnibar.js';
-import { SelectionBar } from './command-bar/SelectionBar.js';
 import { AnnotationPanel } from './annotations/AnnotationPanel.js';
 import { WatchboxPanel } from './watchbox/WatchboxPanel.js';
 import { SituationsPanel } from './situations/SituationsPanel.js';
@@ -87,6 +98,10 @@ export function App(): JSX.Element {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
+  // Saved-search subscription poller (§6.5) — re-runs standing queries, posts to
+  // the Inbox when new objects match. Idempotent; no-ops when no searches exist.
+  useEffect(() => startSavedSearchPoller(), []);
+
   // Global keyboard shortcut: `a` toggles the Alerts panel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -98,6 +113,36 @@ export function App(): JSX.Element {
   }, []);
 
   const onViewerReady = useCallback((v: Cesium.Viewer | null) => setViewer(v), []);
+
+  // View preset (design §6.0/§7): the single console shell renders for every mode;
+  // 'professional' = Command (dense, layers open), 'normal' = Field (a lighter
+  // landing — map foregrounded, flyout closed). Same components, different defaults.
+  const fieldPreset = useDashboardMode((s) => s.mode) === 'normal';
+
+  // Inbox unread badge (design §6.5) — non-archived, unread alerts.
+  const alerts = useAlerts((s) => s.alerts);
+  const inboxRead = useInbox((s) => s.read);
+  const inboxArchived = useInbox((s) => s.archived);
+  const inboxUnread = useMemo(
+    () => alerts.filter((a) => !inboxArchived.has(a.id) && !inboxRead.has(a.id)).length,
+    [alerts, inboxArchived, inboxRead],
+  );
+
+  // Cross-app focus (design §6.1 — apps share selection/context). "Search around"
+  // (EntityPanel → investigationStore) brings the Graph app forward; "Ground recon
+  // here" (right-click) brings the Video app forward — instead of re-keying a tab.
+  const setApp = useAppView((s) => s.setApp);
+  useEffect(() => {
+    if (investigationOpenSeq > 0) setApp('graph');
+  }, [investigationOpenSeq, setApp]);
+  useEffect(() => {
+    if (groundOpenSeq > 0) setApp('video');
+  }, [groundOpenSeq, setApp]);
+  // Geo search-around (§6.4): scoping objects near a map point brings Explorer up.
+  const geoSeq = useGeoScope((s) => s.seq);
+  useEffect(() => {
+    if (geoSeq > 0) setApp('explorer');
+  }, [geoSeq, setApp]);
 
   // DEV-only registry handle for debugging/introspection (mirrors __useSelection).
   useEffect(() => {
@@ -124,6 +169,31 @@ export function App(): JSX.Element {
     [registry, viewer],
   );
 
+  // Left icon rail (design §6.1) — every left-rail surface is a visible icon with
+  // a floating flyout, replacing the old hidden "Panel ▾" chooser. Primary group
+  // = the day-to-day tools; the "more" group holds the deeper instruments.
+  const railItems: RailItem[] = useMemo(
+    () => [
+      { id: 'layers', icon: 'layers', label: 'Layers', content: <LayerCatalog registry={registry} viewer={viewer} /> },
+      { id: 'search-objects', icon: 'search', label: 'Search Objects', content: <SearchObjectsSidebar viewer={viewer} /> },
+      { id: 'feeds', icon: 'feed', label: 'Feeds', content: <FeedsPanel /> },
+      { id: 'ops', icon: 'gauge', label: 'Ops', content: <OpsPanel viewer={viewer} onOpenAlerts={() => setAlertsOpen(true)} /> },
+      { id: 'watch', icon: 'crosshair', label: 'Watchboxes', content: <WatchboxPanel /> },
+      { id: 'annotate', icon: 'pin', label: 'Annotate', content: <AnnotationPanel /> },
+      { id: 'inbox', icon: 'bell', label: 'Inbox', content: <InboxPanel viewer={viewer} />, badge: inboxUnread },
+      { id: 'imagery', icon: 'image', label: 'Imagery', content: <ImageryControl />, group: 'more' },
+      { id: 'chokepoints', icon: 'route', label: 'Chokepoints', content: <ChokepointsList viewer={viewer} />, group: 'more' },
+      { id: 'acars', icon: 'signal', label: 'ACARS', content: <AcarsPanel />, group: 'more' },
+      { id: 'extract', icon: 'file', label: 'Extract', content: <ExtractPanel />, group: 'more' },
+      { id: 'allsources', icon: 'sliders', label: 'All sources', content: <LayerRail registry={registry} viewer={viewer} />, group: 'more' },
+      { id: 'filters', icon: 'filter', label: 'Filters', content: <HistogramPanel viewer={viewer} />, group: 'more' },
+      { id: 'field', icon: 'crosshair', label: 'Field', content: <FieldPanel viewer={viewer} />, group: 'more' },
+      { id: 'tasking', icon: 'satellite', label: 'Sat tasking', content: <TaskingPanel viewer={viewer} />, group: 'more' },
+      { id: 'cop', icon: 'target', label: 'COP editor', content: <CopEditor registry={registry} />, group: 'more' },
+    ],
+    [registry, viewer, inboxUnread],
+  );
+
   // Right rail = CONTEXT only (what's selected / happening). Tasking, Targeting
   // and FMV are full WORKSPACES opened from the command bar (see ModeSurface),
   // not crammed peer tabs — fixes the 7-tab overflow + the cramped board.
@@ -142,16 +212,10 @@ export function App(): JSX.Element {
     [viewer],
   );
 
-  // Focused workspaces (COP edit / FMV / Targeting) hide the competing right
-  // rail so the workspace owns the screen.
-  const focusMode = useUiMode((s) => s.mode);
-  const hideRightRail = focusMode === 'cop' || focusMode === 'fmv' || focusMode === 'targeting';
-
   return (
     <>
       <AlertSubscriber />
       <ConsoleShell
-        overlayLeft={<SelectionBar viewer={viewer} />}
         top={
           <CommandBar
             viewer={viewer}
@@ -160,7 +224,9 @@ export function App(): JSX.Element {
             onOpenAlerts={() => setAlertsOpen(true)}
           />
         }
-        left={<TabbedPanel tabs={leftTabs} defaultTab="ops" variant="menu" ariaLabel="Left rail tabs" />}
+        iconRail
+        mainOverlay={<AppSurface viewer={viewer} />}
+        left={<LeftIconRail items={railItems} defaultOpen={fieldPreset ? null : 'layers'} ariaLabel="Map tools" />}
         leftTabs={leftTabs}
         globe={
           error ? (
@@ -195,28 +261,11 @@ export function App(): JSX.Element {
             <BootLoading />
           )
         }
-        right={
-          hideRightRail ? null : (
-            <TabbedPanel
-              // Remount + re-default to Investigation only when the operator
-              // pressed "Search around" (openSeq>0), or to Ground when they right-
-              // clicked "Ground recon here" (groundOpenSeq). The stable key when
-              // both are 0 means the rail mounts once and behaves as before until
-              // an explicit focus action. Most-recent seq wins the default.
-              key={`right-${investigationOpenSeq}-${groundOpenSeq}`}
-              tabs={rightTabs}
-              variant="menu"
-              defaultTab={
-                groundOpenSeq > 0 && groundOpenSeq >= investigationOpenSeq
-                  ? 'ground'
-                  : investigationOpenSeq > 0
-                    ? 'investigation'
-                    : 'selection'
-              }
-              ariaLabel="Right rail tabs"
-            />
-          )
-        }
+        // Right rail is now the single object-centric Inspector (design §6.3) —
+        // the old 9-tab pile is redistributed: Investigation→Graph app, Intel/
+        // News/Collab→Reports app, Ground→Video app, Filters/Field→rail flyouts,
+        // Alerts→Inbox flyout. Selection context is shared across every app.
+        right={<ObjectInspector viewer={viewer} />}
         rightTabs={rightTabs}
         bottom={<ErrorBoundary label="Timeline"><Timeline viewer={viewer} /></ErrorBoundary>}
       />
@@ -229,7 +278,7 @@ export function App(): JSX.Element {
 // Floating globe controls. A reset-to-top-down button (removes camera tilt /
 // "side view" without losing the analyst's location) — the most-requested
 // orientation control.
-function GlobeControls({ viewer }: { viewer: Cesium.Viewer | null }): JSX.Element | null {
+export function GlobeControls({ viewer }: { viewer: Cesium.Viewer | null }): JSX.Element | null {
   if (!viewer) return null;
   return (
     <div className="absolute bottom-3 right-3 z-[1200] flex flex-col gap-1.5">
@@ -311,7 +360,7 @@ function applyViewport(viewer: Cesium.Viewer, vp: CopViewport, instant: boolean)
   }
 }
 
-function CopControl({
+export function CopControl({
   viewer,
   registry,
 }: {
@@ -502,9 +551,9 @@ function CopControl({
               + Save
             </button>
           </div>
-          {status && <div className="text-txt-2 text-[9px]">{status}</div>}
+          {status && <div className="text-txt-2 text-[10px]">{status}</div>}
           <div className="flex flex-col gap-0.5 max-h-[180px] overflow-auto">
-            {maps.length === 0 && <div className="text-txt-2 text-[9px] py-1">no saved maps</div>}
+            {maps.length === 0 && <div className="text-txt-2 text-[10px] py-1">no saved maps</div>}
             {maps.map((m) => (
               <div key={m.id} className="flex items-center gap-1 group">
                 <button
@@ -565,7 +614,7 @@ function wsBase(): string {
 // first session check has resolved to "no user".
 const FEED_FRESH_MS = 60_000;
 
-function AuthNotice(): JSX.Element | null {
+export function AuthNotice(): JSX.Element | null {
   const { user, loading } = useAuth();
   const feeds = useFeeds((s) => s.feeds);
   if (loading || user || !isSupabaseConfigured) return null;
@@ -617,37 +666,49 @@ function AuthNotice(): JSX.Element | null {
 // over the globe (not a cramped rail tab). Targeting = full-width bottom dock
 // (the F2T2EA board finally gets real width); Tasking = a tall left instrument
 // dock; FMV = a centered sensor window. Closing returns to the live globe.
-function ModeSurface({ viewer, registry }: { viewer: Cesium.Viewer | null; registry: LayerRegistry }): JSX.Element | null {
+export function ModeSurface({ viewer, registry }: { viewer: Cesium.Viewer | null; registry: LayerRegistry }): JSX.Element | null {
   const mode = useUiMode((s) => s.mode);
   const setMode = useUiMode((s) => s.setMode);
   if (!mode) return null;
-  const cfg: Record<NonNullable<UiMode>, { box: string; title: string; node: ReactNode }> = {
+  // Workspaces dock to the RIGHT of the resizable left rail. `left` comes from the
+  // live --rail-left-w var (published by ConsoleShell) + a 10px gap, so dragging
+  // the rail no longer under-/over-laps the workspace (design §4 grammar #1). fmv
+  // is centered and rail-independent.
+  const railLeft = 'calc(var(--rail-left-w, 296px) + 10px)';
+  const cfg: Record<
+    NonNullable<UiMode>,
+    { box: string; title: string; node: ReactNode; railDocked: boolean }
+  > = {
     targeting: {
-      box: 'left-[296px] right-3 top-12 bottom-0',
+      box: 'right-3 top-12 bottom-0',
       title: 'Targeting · F2T2EA kill chain',
       node: <TargetKanbanPanel viewer={viewer} />,
+      railDocked: true,
     },
     tasking: {
-      box: 'left-[306px] top-12 bottom-3 w-[380px]',
+      box: 'top-12 bottom-3 w-[380px]',
       title: 'Satellite Tasking',
       node: <TaskingPanel viewer={viewer} />,
+      railDocked: true,
     },
     fmv: {
       box: 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[470px]',
       title: 'FMV · Notional sensor',
       node: <FmvPanel viewer={viewer} />,
+      railDocked: false,
     },
     cop: {
-      box: 'left-[306px] top-12 bottom-3 w-[380px]',
+      box: 'top-12 bottom-3 w-[380px]',
       title: 'COP Editor · MIL-STD-2525',
       node: <CopEditor registry={registry} />,
+      railDocked: true,
     },
   };
   const c = cfg[mode];
   return (
     <div
       className={`absolute z-[1300] flex flex-col border border-line-2 rounded-md shadow-2xl overflow-hidden ${c.box}`}
-      style={{ background: 'rgba(9,12,18,0.97)' }}
+      style={{ background: 'rgba(9,12,18,0.97)', ...(c.railDocked && { left: railLeft }) }}
     >
       <div className="flex items-center justify-between px-3 h-9 flex-none border-b border-line-2 bg-bg-1">
         <span className="font-label text-[12px] tracking-[0.9px] uppercase text-txt-0">{c.title}</span>

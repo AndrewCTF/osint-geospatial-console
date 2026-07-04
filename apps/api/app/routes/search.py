@@ -158,6 +158,8 @@ def filter_objects(
     since_s: float | None,
     now: float,
     limit: int,
+    start_s: float | None = None,
+    end_s: float | None = None,
 ) -> dict[str, Any]:
     """Filter latest-per-entity observations by facets → results + type counts.
 
@@ -179,7 +181,14 @@ def filter_objects(
         return o.lon >= min_lon or o.lon <= max_lon  # antimeridian wrap
 
     def time_ok(o: Observation) -> bool:
-        return since_s is None or o.t >= now - since_s
+        # Rolling window (since_s) AND absolute static range (start_s/end_s), inclusive.
+        if since_s is not None and o.t < now - since_s:
+            return False
+        if start_s is not None and o.t < start_s:
+            return False
+        if end_s is not None and o.t > end_s:
+            return False
+        return True
 
     def kw_ok(o: Observation) -> bool:
         if qlower is None:
@@ -223,12 +232,16 @@ async def search_objects(
     max_lon: float | None = Query(None, ge=-180, le=180),
     max_lat: float | None = Query(None, ge=-90, le=90),
     since_s: float | None = Query(None, ge=0, le=7 * 24 * 3600),
+    start_s: float | None = Query(None, ge=0),
+    end_s: float | None = Query(None, ge=0),
     limit: int = Query(200, ge=1, le=2000),
 ) -> dict[str, Any]:
     """Faceted search over the live object store (aircraft/vessels/quakes/…).
 
     All facets optional: type (or 'all'), keyword q, drawn-AOI bbox, rolling
-    window since_s. Returns matched results + per-type counts for the facet UI.
+    window since_s, and an absolute epoch-second range start_s/end_s (inclusive).
+    since_s and start/end compose with AND when both are given. Returns matched
+    results + per-type counts for the facet UI.
     """
     import time as _time
 
@@ -244,6 +257,8 @@ async def search_objects(
         since_s=since_s,
         now=_time.time(),
         limit=limit,
+        start_s=start_s,
+        end_s=end_s,
     )
 
 
