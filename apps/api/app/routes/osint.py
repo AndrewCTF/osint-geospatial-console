@@ -213,7 +213,9 @@ async def _enrich_ip(g: _Graph, ip_addr: str) -> None:
             "reverse": geo.get("reverse"),
         })
     if geo.get("asn"):
-        aid = g.obj("asn:" + geo["asn"], "ASN", "ip-api", {"asn": geo["asn"], "org": geo.get("org")})
+        aid = g.obj(
+            "asn:" + geo["asn"], "ASN", "ip-api", {"asn": geo["asn"], "org": geo.get("org")}
+        )
         g.link(aid, iid, "announces")
     for port in (sh.get("ports") or [])[:_MAX_SERVICES]:
         sid = g.obj(f"service:{ip_addr}:{port}", "Service", "shodan",
@@ -254,8 +256,10 @@ async def _investigate_email(g: _Graph, e: str) -> dict[str, Any]:
         for acct in grav.get("accounts", []):
             handle = acct.get("username") or ""
             if handle:
-                uid = g.obj("username:" + _slug(handle), "Username", "gravatar",
-                            {"handle": handle, "service": acct.get("service"), "url": acct.get("url")})
+                uid = g.obj(
+                    "username:" + _slug(handle), "Username", "gravatar",
+                    {"handle": handle, "service": acct.get("service"), "url": acct.get("url")},
+                )
                 g.link(pid, uid, "has_account")
 
     if breach.get("checked") and breach.get("breach_count"):
@@ -313,7 +317,9 @@ async def investigate(
 ) -> InvestigateResponse:
     detected = classify_target(req.target)
     if detected is None:
-        raise HTTPException(status_code=400, detail="target must be a domain, IP, email, or username")
+        raise HTTPException(
+            status_code=400, detail="target must be a domain, IP, email, or username"
+        )
     kind, canonical = detected
 
     g = _Graph(ts=time.time())
@@ -378,8 +384,8 @@ async def recon(
             url, json={"target": canonical, "tool": req.tool},
             timeout=httpx.Timeout(600.0, connect=5.0),
         )
-    except Exception:  # noqa: BLE001
-        raise HTTPException(502, "recon sidecar unreachable")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, "recon sidecar unreachable") from e
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"recon sidecar: {r.text[:200]}")
     data = r.json()
