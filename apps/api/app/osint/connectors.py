@@ -16,9 +16,8 @@ objects/links. Sources, all keyless:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-
 import hashlib
+from typing import Any
 
 from app.osint.fetch import (
     fetch_json,

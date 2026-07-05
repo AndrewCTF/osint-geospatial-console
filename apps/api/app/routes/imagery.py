@@ -18,7 +18,7 @@ import asyncio
 import json
 import math
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
 
@@ -474,7 +474,7 @@ async def imagery_chip(
     CDSE creds (falls to GIBS) — never 500s, never fakes resolution.
     """
     if not date:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date = datetime.now(UTC).strftime("%Y-%m-%d")
     if not _DATE_RE.match(date):
         raise HTTPException(400, "date must be YYYY-MM-DD")
     if source not in _CHIP_SOURCES:
@@ -555,7 +555,10 @@ async def imagery_splat(
                 "exportImage tiles carry NO RPC camera model → only a flat 2.5D splat. "
                 "For real satellite 3D use POST /api/recon/sat (keyless WV-3 + RPC, IARPA MVS3DM).",
             )
-        imgs = [(f"eusi_v{i}_{int(m['off_nadir'])}deg.png", png) for i, (png, m) in enumerate(chips)]
+        imgs = [
+            (f"eusi_v{i}_{int(m['off_nadir'])}deg.png", png)
+            for i, (png, m) in enumerate(chips)
+        ]
         job_id = recon.register_image_job(imgs, mode="mapany")
         return {
             "job_id": job_id,

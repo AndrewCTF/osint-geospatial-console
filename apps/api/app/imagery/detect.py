@@ -90,7 +90,7 @@ async def _run_yolo(image_bytes: bytes) -> list[dict[str, Any]] | None:
             env={**os.environ},
         )
         out, _ = await asyncio.wait_for(proc.communicate(req.encode()), _YOLO_TIMEOUT_S)
-    except (OSError, asyncio.TimeoutError) as e:
+    except (TimeoutError, OSError) as e:
         log.warning("yolo sidecar failed: %r", e)
         return None
     # The sidecar emits a __status__ line then one reply per request; take the
@@ -119,13 +119,15 @@ async def detect_chip(
 
     img = await cdse.fetch_image(layer_id, bbox3857, w, h, date)
     if not img:
+        note = "imagery unavailable (check CDSE creds / date)"
         return {"type": "FeatureCollection", "features": [],
-                "summary": {"detections": 0, "note": "imagery unavailable (check CDSE creds / date)"}}
+                "summary": {"detections": 0, "note": note}}
 
     dets = await _run_yolo(img)
     if dets is None:
+        note = "YOLO sidecar offline (set yolo_python to the CUDA venv)"
         return {"type": "FeatureCollection", "features": [],
-                "summary": {"detections": 0, "note": "YOLO sidecar offline (set yolo_python to the CUDA venv)"}}
+                "summary": {"detections": 0, "note": note}}
 
     features = []
     for i, d in enumerate(dets):
@@ -154,5 +156,7 @@ async def detect_chip(
     return {
         "type": "FeatureCollection",
         "features": features,
-        "summary": {"detections": len(features), "classes": classes, "layer": layer_id, "date": date},
+        "summary": {
+            "detections": len(features), "classes": classes, "layer": layer_id, "date": date,
+        },
     }
