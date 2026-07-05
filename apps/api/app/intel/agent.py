@@ -22,7 +22,16 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from app import llm
-from app.intel import actions, analytics, baseline, classification, deception, dossier, emitter, incidents
+from app.intel import (
+    actions,
+    analytics,
+    baseline,
+    classification,
+    deception,
+    dossier,
+    emitter,
+    incidents,
+)
 from app.intel.geo import BBox, bbox_from_radius
 from app.intel.incident_store import incident_store
 from app.keys import UserCtx
@@ -199,7 +208,9 @@ async def _t_whats_changed(a: dict[str, Any], b: BBox | None) -> dict[str, Any]:
 # The signed-in user for the current run, so the ctx-needing read tools (ontology
 # traverse) can reach it without widening the ToolFn signature. Set at run_agent
 # start, reset in its finally.
-_agent_ctx: contextvars.ContextVar[UserCtx | None] = contextvars.ContextVar("_agent_ctx", default=None)
+_agent_ctx: contextvars.ContextVar[UserCtx | None] = contextvars.ContextVar(
+    "_agent_ctx", default=None
+)
 
 
 async def _t_graph_lookup(a: dict[str, Any], _b: BBox | None) -> dict[str, Any]:
@@ -261,7 +272,9 @@ async def _t_investigate_osint(a: dict[str, Any], _b: BBox | None) -> dict[str, 
         summary = await O._investigate_username(g, canonical)
     return {
         "root": f"{kind}:{canonical}",
-        "objects": [{"id": o.id, "kind": o.kind, "name": o.props.get("name")} for o in g.objs.values()],
+        "objects": [
+            {"id": o.id, "kind": o.kind, "name": o.props.get("name")} for o in g.objs.values()
+        ],
         "links": [{"src": lk.src, "rel": lk.rel, "dst": lk.dst} for lk in g.links.values()],
         "summary": summary,
     }
