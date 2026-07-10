@@ -6,7 +6,7 @@ import { ConsoleShell } from './shell/ConsoleShell.js';
 import { type TabDef } from './shell/TabbedPanel.js';
 import { LeftIconRail, type RailItem } from './shell/LeftIconRail.js';
 import { AppSurface } from './shell/AppSurface.js';
-import { useAppView } from './state/appView.js';
+import { useAppView, APP_META } from './state/appView.js';
 import { useGeoScope } from './state/geoScope.js';
 import { useDashboardMode } from './state/dashboardMode.js';
 import { CommandBar } from './command-bar/CommandBar.js';
@@ -134,6 +134,7 @@ export function App(): JSX.Element {
   // (EntityPanel → investigationStore) brings the Graph app forward; "Ground recon
   // here" (right-click) brings the Video app forward — instead of re-keying a tab.
   const setApp = useAppView((s) => s.setApp);
+  const activeApp = useAppView((s) => s.app);
   useEffect(() => {
     if (investigationOpenSeq > 0) setApp('graph');
   }, [investigationOpenSeq, setApp]);
@@ -229,6 +230,7 @@ export function App(): JSX.Element {
           />
         }
         iconRail
+        fullBleed={APP_META[activeApp].chrome === 'full'}
         mainOverlay={<AppSurface viewer={viewer} />}
         left={<LeftIconRail items={railItems} defaultOpen={fieldPreset ? null : 'layers'} ariaLabel="Map tools" />}
         leftTabs={leftTabs}
