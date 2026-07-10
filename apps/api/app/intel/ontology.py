@@ -52,6 +52,7 @@ ObjectKind = Literal[
     "aircraft", "vessel", "incident", "sim",
     "domain", "ip", "cert", "asn", "service", "threat", "org", "email",
     "person", "username", "investigation",
+    "country", "resource",
     "object",
 ]
 
@@ -60,6 +61,7 @@ _KNOWN_KINDS: frozenset[str] = frozenset(
         "aircraft", "vessel", "incident", "sim",
         "domain", "ip", "cert", "asn", "service", "threat", "org", "email",
         "person", "username", "investigation",
+        "country", "resource",
         "object",
     )
 )
@@ -79,6 +81,9 @@ KNOWN_RELS: frozenset[str] = frozenset(
         "member_of",  # sim drone → swarm
         "contains",  # situation → child incident/entity/COA it aggregates
         "part_of",  # inverse of contains (child → situation)
+        # Country-OSINT catalog (docs/country-osint-spec.md).
+        "has_resource",  # country → resource (a toolkit entry for that country)
+        "hosted_at",  # resource → domain (bridges into the digital-OSINT graph)
     )
 )
 

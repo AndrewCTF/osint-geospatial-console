@@ -35,6 +35,7 @@ import { InvestigationCanvas } from './graph/InvestigationCanvas.js';
 import { useInvestigation } from './graph/investigationStore.js';
 import { ExtractPanel } from './extract/ExtractPanel.js';
 import { InvestigatePanel } from './osint/InvestigatePanel.js';
+import { CountriesPanel } from './osint/CountriesPanel.js';
 import { CollabPanel } from './collab/CollabPanel.js';
 import { HistogramPanel } from './explorer/HistogramPanel.js';
 import { SearchObjectsSidebar } from './explorer/SearchObjectsSidebar.js';
@@ -187,6 +188,7 @@ export function App(): JSX.Element {
       { id: 'acars', icon: 'signal', label: 'ACARS', content: <AcarsPanel />, group: 'more' },
       { id: 'extract', icon: 'file', label: 'Extract', content: <ExtractPanel />, group: 'more' },
       { id: 'investigate', icon: 'search', label: 'Investigate', content: <InvestigatePanel />, group: 'more' },
+      { id: 'countries', icon: 'globe', label: 'Countries', content: <CountriesPanel />, group: 'more' },
       { id: 'allsources', icon: 'sliders', label: 'All sources', content: <LayerRail registry={registry} viewer={viewer} />, group: 'more' },
       { id: 'filters', icon: 'filter', label: 'Filters', content: <HistogramPanel viewer={viewer} />, group: 'more' },
       { id: 'field', icon: 'crosshair', label: 'Field', content: <FieldPanel viewer={viewer} />, group: 'more' },
