@@ -127,7 +127,7 @@ export function ExplorerApp({ viewer }: { viewer: Cesium.Viewer | null }): JSX.E
       {/* filter bar */}
       <div className="shrink-0 border-b border-line-2 bg-bg-1 px-3 py-2 flex flex-col gap-2">
         {geoScope && (
-          <div className="flex items-center gap-2 self-start mono text-[10px] px-2 py-0.5 rounded-full border border-accent-line bg-accent-dim text-accent">
+          <div className="flex items-center gap-2 self-start mono text-[10px] px-2 py-0.5 rounded-sm border border-accent-line bg-accent-dim text-accent">
             within {geoScope.radiusKm} km of {geoScope.label ?? `${geoScope.lat.toFixed(2)}, ${geoScope.lon.toFixed(2)}`}
             <button type="button" onClick={() => clearGeo(null)} aria-label="Clear geo scope" className="text-txt-2 hover:text-txt-0">
               ✕
@@ -163,7 +163,7 @@ export function ExplorerApp({ viewer }: { viewer: Cesium.Viewer | null }): JSX.E
               key={k}
               type="button"
               onClick={() => setType(k)}
-              className={`mono text-[10px] px-2 py-0.5 rounded-full border ${
+              className={`mono text-[10px] px-2 py-0.5 rounded-sm border ${
                 type === k ? 'border-accent-line text-accent bg-accent-dim' : 'border-line text-txt-2 hover:text-txt-0'
               }`}
             >

@@ -49,7 +49,7 @@ export function LeftIconRail({
         <Icon name={it.icon} className="w-[18px] h-[18px]" />
         {on && <span className="absolute left-0 top-1 bottom-1 w-[2px] bg-accent rounded-r-sm" />}
         {it.badge != null && it.badge > 0 && (
-          <span className="absolute top-1 right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-alert text-white text-[10px] leading-[14px] text-center font-semibold">
+          <span className="absolute top-1 right-1 min-w-[14px] h-[14px] px-[3px] rounded-sm bg-alert text-white text-[10px] leading-[14px] text-center font-semibold">
             {it.badge > 99 ? '99+' : it.badge}
           </span>
         )}

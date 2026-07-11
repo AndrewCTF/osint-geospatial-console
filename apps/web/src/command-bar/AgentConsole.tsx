@@ -749,14 +749,14 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
       {!isMobile && (
         <div className="flex items-center gap-2 px-2.5 py-1.5 border-t border-line overflow-hidden shrink-0">
           <span className="mono text-[10px] tracking-[0.6px] uppercase text-txt-4">Standing</span>
-          <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
+          <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-sm px-2 py-[3px] whitespace-nowrap">
             <StatusDot tone={worstSev} />alerts <b className="text-txt-1 font-medium">{alerts.length}</b>
           </span>
-          <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
+          <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-sm px-2 py-[3px] whitespace-nowrap">
             AOI <b className="text-txt-1 font-medium">{activeAoi ? activeAoi.name : 'global'}</b>
           </span>
           {totalFeeds > 0 && (
-            <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-full px-2 py-[3px] whitespace-nowrap">
+            <span className="flex items-center gap-1.5 mono text-[10px] text-txt-2 border border-line rounded-sm px-2 py-[3px] whitespace-nowrap">
               <StatusDot tone={greenFeeds === totalFeeds ? 'green' : 'amber'} />feeds{' '}
               <b className="text-txt-1 font-medium">{greenFeeds}/{totalFeeds}</b>
             </span>
