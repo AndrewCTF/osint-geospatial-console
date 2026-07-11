@@ -54,6 +54,8 @@ from app.routes import acars as acars_routes
 from app.routes import actions as actions_routes
 from app.routes import adsb as adsb_routes
 from app.routes import ai as ai_routes
+from app.routes import ai_models as ai_models_routes
+from app.routes import ai_selection as ai_selection_routes
 from app.routes import airspace as airspace_routes
 from app.routes import ais as ais_routes
 from app.routes import alert_rules as alert_rules_routes
@@ -204,6 +206,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from app import mavlink_sidecar  # noqa: PLC0415
 
             await mavlink_sidecar.start()
+            # Local-LLM serving sidecars (app.localllm's engines): llama.cpp
+            # router mode is PRIMARY for the installed Unsloth GGUF catalog;
+            # vLLM is opt-in and only ever serves a manually-placed safetensors
+            # model. Both no-op (best-effort, log-only) when disabled/unready —
+            # no binary, no installed model, engine pointed elsewhere, or (vLLM)
+            # too-old/absent. Torn down in the finally block.
+            from app import llamacpp_sidecar  # noqa: PLC0415
+
+            await llamacpp_sidecar.start()
+            from app import vllm_sidecar  # noqa: PLC0415
+
+            await vllm_sidecar.start()
             correlate_runner.start()
             # ADS-B sticky snapshot: start the background refresher at BOOT so the
             # snapshot (and the pre-gzipped world-view blob the hot route + /ws/adsb
@@ -371,6 +385,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from app import mavlink_sidecar  # noqa: PLC0415
 
             await mavlink_sidecar.stop()
+            # Tear down the local-LLM serving sidecars (no-op if never started).
+            from app import llamacpp_sidecar  # noqa: PLC0415
+
+            await llamacpp_sidecar.stop()
+            from app import vllm_sidecar  # noqa: PLC0415
+
+            await vllm_sidecar.stop()
 
 
 def create_app() -> FastAPI:
@@ -405,6 +426,8 @@ def create_app() -> FastAPI:
     app.include_router(aviation_routes.router)
     app.include_router(adsb_routes.router)
     app.include_router(ai_routes.router)
+    app.include_router(ai_models_routes.router)
+    app.include_router(ai_selection_routes.router)
     app.include_router(firms_routes.router)
     app.include_router(ais_routes.router)
     app.include_router(seismic_routes.router)

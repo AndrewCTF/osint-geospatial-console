@@ -35,6 +35,7 @@ import { AcarsCard } from './AcarsCard.js';
 import { ImageryCard } from './ImageryCard.js';
 import { PatternOfLifeCard } from './PatternOfLifeCard.js';
 import { DossierNarrativeCard } from './DossierNarrativeCard.js';
+import { AiAssessmentCard } from './AiAssessmentCard.js';
 import { VesselClassCard } from './VesselClassCard.js';
 import { AirportCard } from './AirportCard.js';
 import { PortCard } from './PortCard.js';
@@ -368,6 +369,13 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
       {snap?.kind === 'capture' && <CaptureCard snap={snap} />}
 
       <PatternOfLifeCard id={id} kind={snap?.kind ?? ''} viewer={viewer ?? null} />
+
+      <AiAssessmentCard
+        id={id}
+        kind={snap?.kind ?? ''}
+        properties={snap?.properties ?? {}}
+        {...(snap?.position ? { altM: snap.position.alt } : {})}
+      />
 
       <DossierNarrativeCard id={id} kind={snap?.kind ?? ''} />
 

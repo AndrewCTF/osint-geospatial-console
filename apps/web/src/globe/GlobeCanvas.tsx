@@ -4,12 +4,13 @@ import { MapboxTerrainProvider } from '@macrostrat/cesium-martini';
 import { isMobileDevice } from '../shell/device.js';
 import { useSettings } from '../state/settings.js';
 import type { LayerRegistry } from '../registry/LayerRegistry.js';
-import { useTime, useSelection, useImagery, useSim } from '../state/stores.js';
+import { useTime, useSelection, useSearchTarget, useImagery, useSim } from '../state/stores.js';
 import type { ImageryMode } from '../state/stores.js';
 import { imageryOverlayUrl } from '../imagery/gibsUrl.js';
 import { loadLod1, loadLod1Bbox, clearLod1 } from '../lod1/lod1Layer.js';
 import { LayerCompositor } from './LayerCompositor.js';
 import { installSelectionReticle } from './selectionReticle.js';
+import { installSearchTargetMarker } from './searchTargetMarker.js';
 import { installSelectionTrack } from './selectionTrack.js';
 import { installSpotlight } from './SpotlightLayer.js';
 import { installFov } from './FovLayer.js';
@@ -669,7 +670,13 @@ export function GlobeCanvas({
         return;
       }
       const id = (pickedId as { id?: string } | undefined)?.id;
+      // The search pin / reticle are non-selectable helper overlays — a click on
+      // one is a no-op, never a selection change.
+      if (id === '__searchtarget__' || id === '__reticle__') return;
       useSelection.getState().select(id ?? null);
+      // Clicking empty globe is the "clear everything" gesture — retire the
+      // search pin too so it doesn't linger after the operator moves on.
+      if (!id) useSearchTarget.getState().setTarget(null);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     // Right-click an entity → "Search around" (expand its 2-hop links in the
@@ -706,6 +713,8 @@ export function GlobeCanvas({
 
     // Pulsing reticle around the currently-selected entity.
     const detachReticle = installSelectionReticle(viewer);
+    // Amber pin + label at a static location jumped-to from the search box.
+    const detachSearchTarget = installSearchTargetMarker(viewer);
     // Magenta polyline through the selected entity's last ~60 positions.
     const detachTrack = installSelectionTrack(viewer);
     // Sensor fog-of-war spotlight that follows the selected sim drone (FMV toggle).
@@ -757,6 +766,7 @@ export function GlobeCanvas({
       viewer.camera.moveEnd.removeEventListener(onMoveEnd);
       if (restoreTimer != null) window.clearTimeout(restoreTimer);
       detachReticle();
+      detachSearchTarget();
       detachTrack();
       detachSpotlight();
       detachFov();
