@@ -126,7 +126,7 @@ def run_sql(
             raise SqlError(str(exc)) from exc
         if len(fetched) > max_rows:
             fetched = fetched[:max_rows]
-        return [dict(zip(cols, row)) for row in fetched], cols
+        return [dict(zip(cols, row, strict=True)) for row in fetched], cols
     finally:
         if timer is not None:
             timer.cancel()
