@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 import * as Cesium from 'cesium';
 import { useUiMode, type UiMode } from './state/uiMode.js';
 import type { RuntimeConfig } from '@osint/shared';
@@ -550,7 +551,7 @@ export function CopControl({
   return (
     <div className="absolute bottom-3 right-[112px] z-[var(--z-dock)] flex flex-col items-end gap-1.5">
       {open && (
-        <div className="mono text-[10px] w-[212px] border border-line rounded-sm bg-bg-1/95 text-txt-1 shadow-xl p-2 flex flex-col gap-1.5">
+        <div className="mono text-[10px] w-[212px] max-w-[92vw] border border-line rounded-sm bg-bg-1/95 text-txt-1 shadow-xl p-2 flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <span className="font-label uppercase tracking-[0.7px] text-txt-0 text-[10px]">Shared COP</span>
             <button type="button" className="text-txt-2 hover:text-txt-0 px-1" onClick={onSave} title="Save current view as a named map">
@@ -583,8 +584,9 @@ export function CopControl({
                   className="px-1 py-0.5 text-txt-2 hover:text-alert opacity-0 group-hover:opacity-100"
                   onClick={() => void onDelete(m.id)}
                   title={`Delete "${m.name}"`}
+                  aria-label={`Delete ${m.name}`}
                 >
-                  ✕
+                  <X size={12} strokeWidth={1.75} aria-hidden />
                 </button>
               </div>
             ))}
@@ -692,19 +694,19 @@ export function ModeSurface({ viewer, registry }: { viewer: Cesium.Viewer | null
       railDocked: true,
     },
     tasking: {
-      box: 'top-12 bottom-3 w-[380px]',
+      box: 'top-12 bottom-3 w-[380px] max-w-[92vw]',
       title: 'Satellite Tasking',
       node: <TaskingPanel viewer={viewer} />,
       railDocked: true,
     },
     fmv: {
-      box: 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[470px]',
+      box: 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] max-w-[94vw] h-[470px] max-h-[88vh]',
       title: 'FMV · Notional sensor',
       node: <FmvPanel viewer={viewer} />,
       railDocked: false,
     },
     cop: {
-      box: 'top-12 bottom-3 w-[380px]',
+      box: 'top-12 bottom-3 w-[380px] max-w-[92vw]',
       title: 'COP Editor · MIL-STD-2525',
       node: <CopEditor registry={registry} />,
       railDocked: true,
@@ -721,10 +723,11 @@ export function ModeSurface({ viewer, registry }: { viewer: Cesium.Viewer | null
         <button
           type="button"
           onClick={() => setMode(null)}
-          className="mono text-[13px] leading-none text-txt-2 hover:text-txt-0 px-1"
+          className="mono text-[13px] leading-none text-txt-2 hover:text-txt-0 px-1 flex items-center"
           aria-label="Close workspace"
+          title="Close"
         >
-          ✕
+          <X size={14} strokeWidth={1.75} aria-hidden />
         </button>
       </div>
       <div className="flex-1 min-h-0 overflow-auto">{c.node}</div>

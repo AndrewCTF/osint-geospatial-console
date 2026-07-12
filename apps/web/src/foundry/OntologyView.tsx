@@ -224,7 +224,7 @@ export function OntologyView(): JSX.Element {
           <Badge tone="accent">updated {syncAll.agg.updated}</Badge>
           {syncAll.agg.skipped > 0 && <span className="text-txt-3">skipped {syncAll.agg.skipped}</span>}
           {syncAll.agg.errors.length > 0 && <Badge tone="alert">{syncAll.agg.errors.length} error(s)</Badge>}
-          <button type="button" onClick={() => setSyncAll(null)} className="ml-auto text-txt-3 hover:text-txt-0">✕</button>
+          <button type="button" onClick={() => setSyncAll(null)} className="ml-auto text-txt-3 hover:text-txt-0" aria-label="Dismiss" title="Dismiss">✕</button>
         </div>
       )}
 

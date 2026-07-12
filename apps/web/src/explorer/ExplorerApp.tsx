@@ -5,6 +5,7 @@ import { useSelection } from '../state/stores.js';
 import { useGeoScope } from '../state/geoScope.js';
 import { haversineKm } from '../globe/draw.js';
 import { useSavedSearches } from '../state/savedSearches.js';
+import { toast } from '../shell/toast.js';
 
 // Explorer app (design §6.1 / §8 "Object Explorer") — top-down analysis over the
 // live object store: type facets + keyword + rolling window, live counts, and a
@@ -37,7 +38,6 @@ export function ExplorerApp({ viewer }: { viewer: Cesium.Viewer | null }): JSX.E
   const geoScope = useGeoScope((s) => s.scope);
   const clearGeo = useGeoScope((s) => s.setScope);
   const saveSearch = useSavedSearches((s) => s.add);
-  const [saved, setSaved] = useState(false);
   const abort = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -224,13 +224,12 @@ export function ExplorerApp({ viewer }: { viewer: Cesium.Viewer | null }): JSX.E
               const win = WINDOWS[winIdx];
               const label = `${type}${q ? ` · "${q}"` : ''}${win && win.s != null ? ` · ${win.label}` : ''}`;
               saveSearch(label, { type, q, ...(win && win.s != null ? { sinceS: win.s } : {}) });
-              setSaved(true);
-              window.setTimeout(() => setSaved(false), 1500);
+              toast.ok('Search saved');
             }}
             title="Save this filter as an Inbox subscription — you're notified when new objects match"
             className="mono text-[10px] uppercase tracking-[0.4px] px-2 py-0.5 rounded-sm border border-line text-txt-2 hover:text-txt-0 hover:border-accent-line"
           >
-            {saved ? 'Saved ✓' : 'Save search'}
+            Save search
           </button>
           <button
             type="button"

@@ -2,6 +2,7 @@ import { ListChecks } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { useWorkflows } from '../state/workflows.js';
 import { Badge } from '../shell/instruments.js';
+import { InlineAlert } from '../shell/InlineAlert.js';
 import { useWorkflowsNav } from './nav.js';
 import { useWorkflowsPoll } from './useWorkflowsPoll.js';
 import {
@@ -181,9 +182,7 @@ export function RunsView(): JSX.Element {
                     <tr className="border-t border-line bg-bg-0">
                       <td colSpan={5} className="px-3 py-2.5 space-y-2.5">
                         {r.error && (
-                          <div className="rounded-sm border border-[rgba(255,90,82,0.38)] bg-alert-bg px-2 py-1.5 text-[11px] text-[#ffc9c5]">
-                            {r.error}
-                          </div>
+                          <InlineAlert tone="alert">{r.error}</InlineAlert>
                         )}
                         <LogView lines={r.log} className="max-h-56" />
                         <OutputTables output={r.output} />

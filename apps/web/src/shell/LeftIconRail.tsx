@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { X } from 'lucide-react';
 import { Icon, type IconName } from '../normal/Icon.js';
 
 // Left icon rail (design §6.1 grammar #3/#4). A 44px column of icons; clicking one
@@ -79,9 +80,10 @@ export function LeftIconRail({
               type="button"
               onClick={() => setOpen(null)}
               aria-label="Close panel"
-              className="text-txt-3 hover:text-txt-0 text-[13px] leading-none px-1"
+              title="Close"
+              className="text-txt-3 hover:text-txt-0 text-[13px] leading-none px-1 flex items-center"
             >
-              ✕
+              <X size={13} strokeWidth={1.75} aria-hidden />
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-auto">{active.content}</div>

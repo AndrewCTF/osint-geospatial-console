@@ -471,7 +471,7 @@ function DatasetDetail({ dataset }: { dataset: Dataset }): JSX.Element {
                   {deadLetter.map((e, i) => (
                     <tr key={i} className={rowCls}>
                       <td className="px-2.5 py-1.5"><Badge tone="warn">{e.step_type}</Badge></td>
-                      <td className={`${cellMono} text-[#ffb3ae] text-[10px]`}>{e.error}</td>
+                      <td className={`${cellMono} text-alert-fg text-[10px]`}>{e.error}</td>
                       <td className={`${cellMono} text-txt-3 text-[10px] truncate max-w-[280px]`}>{JSON.stringify(e.row)}</td>
                     </tr>
                   ))}

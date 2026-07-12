@@ -88,7 +88,7 @@ const STEPS: Step[] = [
     title: 'Keys, layout & local AI live in Settings',
     body: (
       <>
-        The core is keyless, but <b className="text-txt-1">⚙ Settings</b> (top-right) lets you
+        The core is keyless, but <b className="text-txt-1">Settings</b> (top-right) lets you
         bring your own keys for extras — NASA FIRMS fires, high-res satellite imagery — pick a{' '}
         <b className="text-txt-1">dashboard layout</b>, and route AI to a local GPU model. You
         can always re-open this tour from there.
