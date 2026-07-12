@@ -474,6 +474,37 @@ async def test_delete_model_refuses_while_download_running() -> None:
     assert key not in {m["key"] for m in manager.list_installed()}
 
 
+async def test_delete_model_blocks_racing_download_via_deleting_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """delete_model must hold the key in _DELETING across the wipe so a
+    start_download racing between the running-job check and the rmdir is
+    rejected (409) instead of writing into the directory being deleted."""
+    key = _install_fake_model()
+    _fake_hf_api(
+        monkeypatch,
+        [SimpleNamespace(rfilename="model-UD-Q4_K_XL.gguf", size=10, lfs=None)],
+    )
+    # A key claimed for deletion rejects a racing start_download with 409.
+    manager._DELETING.add(key)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await manager.start_download("unsloth/Qwen3.5-9B-GGUF", "UD-Q4_K_XL")
+        assert exc.value.status_code == 409
+    finally:
+        manager._DELETING.discard(key)
+    # And delete_model releases the guard in finally even on wipe error.
+    boom = _install_fake_model()
+
+    def raise_wipe(k: str) -> None:
+        raise RuntimeError("wipe blew up")
+
+    monkeypatch.setattr(manager, "_delete_model_files", raise_wipe)
+    with pytest.raises(RuntimeError):
+        manager.delete_model(boom)
+    assert boom not in manager._DELETING
+
+
 async def test_start_download_concurrent_dedups_to_single_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -519,8 +550,9 @@ async def test_start_download_concurrent_dedups_to_single_job(
 async def test_start_download_drops_placeholder_on_preflight_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A 404/507 preflight failure must not leave a stale queued placeholder in
-    _JOBS (which would wrongly dedup — and block deletion of — future starts)."""
+    """A 404/507 preflight failure must mark the placeholder job status='error'
+    (so a deduped second caller polling that job_id sees the failure instead of a
+    404) rather than pop it — and it must no longer count as a running job."""
     _fake_hf_api(
         monkeypatch,
         [SimpleNamespace(rfilename="model-Q8_0.gguf", size=1000, lfs=None)],
@@ -529,7 +561,12 @@ async def test_start_download_drops_placeholder_on_preflight_failure(
         await manager.start_download("unsloth/Qwen3.5-9B-GGUF", "UD-Q4_K_XL")
     assert exc.value.status_code == 404
     key = manager.key_for("unsloth/Qwen3.5-9B-GGUF", "UD-Q4_K_XL")
-    assert not [j for j in manager._JOBS.values() if j.key == key]
+    jobs = [j for j in manager._JOBS.values() if j.key == key]
+    assert len(jobs) == 1
+    assert jobs[0].status == "error"
+    assert jobs[0].error
+    # An errored placeholder is not "running": it must neither dedup a future
+    # start nor block deletion.
     assert manager._running_job_for_key(key) is None
 
 

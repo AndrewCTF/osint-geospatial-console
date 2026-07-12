@@ -22,6 +22,16 @@ real drone uplink is the operator pointing a block at THEIR OWN control server.
 Wire contract (what your control server must accept) is documented in
 ``docs/workflows-control-blocks.md``; every envelope is a single JSON object
 POSTed with ``content-type: application/json``.
+
+DNS rebinding: ``check_url`` resolves a hostname to enforce the link-local
+guard, but ``httpx`` re-resolves at request time, so a rebinding DNS name could
+pass validation then resolve to 169.254.169.254 on the real request. For plain
+``http://`` URLs ``send`` closes this by resolving once, re-checking the guard
+on the resolved IPs, then pinning the connection to the validated IP (URL host
+rewritten to the IP, ``Host`` header set to the original name). ``https://``
+keeps the hostname in the URL because certificate validation needs it, leaving a
+residual rebinding window for https — accepted because the cloud-metadata
+endpoints this guard targets are http, not https.
 """
 
 from __future__ import annotations
@@ -32,7 +42,7 @@ import socket
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -165,6 +175,54 @@ def auth_headers(auth_env: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _pin_http_url(url: str, headers: dict[str, str]) -> tuple[str, dict[str, str]]:
+    """Close the DNS-rebinding gap for plain ``http://`` DNS-name URLs.
+
+    ``check_url`` resolved the host once at validation time, but ``httpx``
+    re-resolves at request time — a rebinding name could answer with a benign IP
+    then flip to 169.254.169.254. Resolve ONCE here, re-check the link-local
+    guard on the resolved IPs, and pin the connection to the validated IP by
+    rewriting the URL host while preserving the original hostname in the ``Host``
+    header. IP-literal hosts (nothing to rebind) and allowlisted hosts (operator
+    opt-in) pass through untouched; ``https://`` passes through so TLS cert
+    validation still sees the hostname (residual risk documented in the module
+    docstring)."""
+    parts = urlsplit(url)
+    if parts.scheme != "http" or not parts.hostname:
+        return url, headers
+    try:
+        ipaddress.ip_address(parts.hostname)
+        return url, headers  # already an IP literal — nothing to rebind
+    except ValueError:
+        pass
+    allow = _allow_hosts()
+    if allow is not None and parts.hostname.lower() in allow:
+        return url, headers  # operator explicitly trusts this host
+    try:
+        resolved = sorted({ai[4][0] for ai in socket.getaddrinfo(parts.hostname, None)})
+    except OSError:
+        return url, headers  # unresolvable — let the request itself fail
+    for addr in resolved:
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network("169.254.0.0/16"):
+            raise WorkflowError(
+                403,
+                f"host {parts.hostname!r} resolved to the link-local/metadata range "
+                f"({addr}); blocked as a DNS-rebinding attempt",
+            )
+    pin = next((a for a in resolved if ":" not in a), resolved[0] if resolved else None)
+    if pin is None:
+        return url, headers
+    netloc = f"[{pin}]" if ":" in pin else pin
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    pinned = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return pinned, {**headers, "Host": parts.hostname}
+
+
 # ── the one network call (monkeypatched in tests) ────────────────────────────
 
 
@@ -200,6 +258,7 @@ async def send(
     transport/timeout error becomes ``HttpResult(error=...)`` so a single bad
     endpoint fails just its row, not the whole run. This is the seam tests
     replace to assert envelopes without real network."""
+    url, headers = _pin_http_url(url, headers)
     try:
         resp = await _client().request(
             method.upper(),

@@ -234,10 +234,25 @@ def delete_model(key: str) -> None:
     """
     if not _KEY_RE.match(key):
         raise HTTPException(status_code=404, detail="unknown model key")
-    if _running_job_for_key(key) is not None:
-        raise HTTPException(
-            status_code=409, detail="a download for this model is in progress; cannot delete"
-        )
+    # Claim the key for deletion atomically: reject if a download is in flight,
+    # otherwise mark it in `_DELETING` under the same lock start_download uses to
+    # register a job, so no writer can slip into the directory mid-wipe.
+    with _JOBS_LOCK:
+        if _running_job_for_key_locked(key) is not None:
+            raise HTTPException(
+                status_code=409, detail="a download for this model is in progress; cannot delete"
+            )
+        _DELETING.add(key)
+    try:
+        _delete_model_files(key)
+    finally:
+        with _JOBS_LOCK:
+            _DELETING.discard(key)
+
+
+def _delete_model_files(key: str) -> None:
+    """Filesystem wipe for ``delete_model``; caller has already claimed *key* in
+    ``_DELETING`` so no concurrent download can write into the directory."""
     root = models_root().resolve()
     target = root / key
     if target.is_symlink():  # checked BEFORE resolve() — never follow it anywhere
@@ -377,6 +392,14 @@ _ACTIVE_JOB_STATUSES = ("queued", "downloading", "verifying")
 # in-flight dedup check-then-register is a TOCTOU: two concurrent POSTs both
 # pass the check before either inserts, spawning two writers into one dir.
 _JOBS_LOCK = threading.Lock()
+
+# Keys currently being wiped by ``delete_model``. Guarded by ``_JOBS_LOCK`` (the
+# same lock the download dedup uses) so a delete and a start_download can never
+# straddle each other: delete adds the key here BEFORE releasing the lock to
+# wipe the directory, and start_download's atomic check-and-register refuses any
+# key in this set. Without it, a start_download could register + begin writing
+# into the directory between delete's running-job check and its rmdir.
+_DELETING: set[str] = set()
 
 
 def _running_job_for_key_locked(key: str) -> Job | None:
@@ -548,6 +571,11 @@ async def start_download(repo_id: str, quant: str) -> str:
     job_id = uuid.uuid4().hex
     job = Job(job_id=job_id, repo_id=repo_id, quant=quant, key=key)
     with _JOBS_LOCK:
+        if key in _DELETING:
+            raise HTTPException(
+                status_code=409,
+                detail="this model is being deleted; retry the download once it completes",
+            )
         existing = _running_job_for_key_locked(key)
         if existing is not None:
             return existing.job_id
@@ -571,9 +599,14 @@ async def start_download(repo_id: str, quant: str) -> str:
                 status_code=507,
                 detail=f"insufficient disk space: need ~{needed_gb:.1f}GB free, have {free_gb:.1f}GB",
             )
-    except BaseException:
+    except BaseException as exc:
+        # Do NOT pop the placeholder: a second caller may have deduped against it
+        # and be polling this job_id — popping would 404 them. Mark it errored so
+        # the poll sees the preflight failure and the normal prune lifecycle
+        # reclaims it, while the first caller still gets the raised HTTP error.
         with _JOBS_LOCK:
-            _JOBS.pop(job_id, None)
+            job.status = "error"
+            job.error = str(getattr(exc, "detail", None) or exc)
         raise
 
     job.bytes_total = total_bytes

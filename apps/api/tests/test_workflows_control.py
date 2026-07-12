@@ -303,6 +303,51 @@ def test_check_url_link_local_allowed_when_explicitly_allowlisted(
     control.check_url("http://169.254.169.254/x")  # operator opted in → allowed
 
 
+def _fake_getaddrinfo(monkeypatch: pytest.MonkeyPatch, mapping: dict[str, str]) -> None:
+    """Pin socket.getaddrinfo so a hostname resolves to a chosen IP — models a
+    DNS-rebinding server that answered differently at request time."""
+    import socket as _socket
+
+    def fake(host, *a, **kw):
+        ip = mapping[host]
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 0, "", (ip, 0))]
+
+    monkeypatch.setattr(control.socket, "getaddrinfo", fake)
+
+
+def test_pin_http_url_blocks_dns_rebinding_to_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A DNS name that (re)resolves to the link-local/metadata range at request
+    time is blocked by _pin_http_url even though check_url passed earlier."""
+    _fake_getaddrinfo(monkeypatch, {"rebind.evil.example": "169.254.169.254"})
+    with pytest.raises(WorkflowError) as exc:
+        control._pin_http_url("http://rebind.evil.example/latest/meta-data/", {})
+    assert exc.value.status_code == 403
+
+
+def test_pin_http_url_pins_benign_name_to_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A benign http DNS name is pinned to its validated IP with the original
+    hostname carried in the Host header, so httpx cannot re-resolve elsewhere."""
+    _fake_getaddrinfo(monkeypatch, {"control.local.example": "192.168.1.50"})
+    url, headers = control._pin_http_url("http://control.local.example:9010/command", {})
+    assert url == "http://192.168.1.50:9010/command"
+    assert headers["Host"] == "control.local.example"
+
+
+def test_pin_http_url_leaves_ip_literals_and_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    # IP literal → nothing to rebind, untouched.
+    assert control._pin_http_url("http://192.168.1.50/x", {}) == ("http://192.168.1.50/x", {})
+    # https → hostname preserved for cert validation (documented residual risk).
+    assert control._pin_http_url("https://host.example/x", {}) == ("https://host.example/x", {})
+
+
+def test_pin_http_url_skips_allowlisted_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKFLOWS_HTTP_ALLOW_HOSTS", "trusted.example")
+    assert control._pin_http_url("http://trusted.example/x", {}) == (
+        "http://trusted.example/x",
+        {},
+    )
+
+
 def test_control_client_does_not_follow_redirects() -> None:
     # check_url validates only the original URL, so the shared client must not
     # chase a 3xx (which could hop to the link-local/metadata range).
