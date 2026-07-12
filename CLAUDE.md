@@ -106,7 +106,7 @@ Ontology (2026-07-07, docs/decisions.md#ontology-local-first-store-2026-07-07):
   bug-hunt fix wave — evidence-locker SSRF/XSS/tamper-export/custody-prune
   hardening — up from 1536 after the selection-brief enrichment-fusion wave,
   1533 after the evidence-locker + case-export wave, 1507 after the bug-fix
-  wave and 1294 on w5-places-airspace-enrichment).
+  wave (PR #38) and 1294 on w5-places-airspace-enrichment).
   Never commit below the baseline you inherited; update this number when you raise it.
 - `pnpm -r typecheck` green at every commit boundary. `bash scripts/verify.sh`
   = typecheck + lint + web unit + api tests in one command.
