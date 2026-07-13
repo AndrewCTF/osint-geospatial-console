@@ -2,6 +2,15 @@ import * as Cesium from 'cesium';
 import { apiFetch } from '../../transport/http.js';
 import { eventIcon, type EventGlyph } from '../eventIcons.js';
 import { conflictSymbol, incidentSymbol, outageSymbol } from './eventStyle.js';
+import {
+  cachedShape,
+  requestEventShapes,
+  shapeKey,
+  SHAPE_MISS,
+  type ShapeGeometry,
+  type ShapeLevel,
+  type ShapeQuery,
+} from './eventShapes.js';
 import type { AdapterCtx, LayerAdapter } from './types.js';
 
 // Renders cross-domain incidents (the fusion brief), GDELT/ACLED armed-conflict
@@ -16,6 +25,13 @@ import type { AdapterCtx, LayerAdapter } from './types.js';
 // area in meters), the SAME entity also gets a translucent ground ellipse in
 // the event's severity colour, so a strike/attack reads as an area, not just a
 // pin. Static geometry only (no CallbackProperty) — requestRenderMode friendly.
+//
+// When a feature ALSO carries `iso3` + `shape_level` ("adm1"|"adm2"), the real
+// admin polygon is resolved via POST /api/geo/event-shapes (batched, cached in
+// ./eventShapes.ts) and REPLACES the ellipse on the same entity — the actual
+// place gets shaded, not a circle. Until the shape arrives (or on a server
+// miss / malformed geometry) the radius_m ellipse stays: circle is the
+// FALLBACK, polygon is the goal state.
 //
 // Upsert by a STABLE composite key (centroid+domains) because the brief mints a
 // fresh random `id` every poll — keying on it would churn every entity each
@@ -33,6 +49,18 @@ interface Area {
   label: string;
   /** Uncertainty / plausible-area radius in meters, null when absent/invalid. */
   radiusM: number | null;
+  /** ISO3 country code when the backend can name the admin area, else null. */
+  iso3: string | null;
+  /** Admin level to resolve ("adm1"|"adm2"), null when the feature has none. */
+  shapeLevel: ShapeLevel | null;
+}
+
+function shapeLevelOf(v: unknown): ShapeLevel | null {
+  return v === 'adm1' || v === 'adm2' ? v : null;
+}
+
+function iso3Of(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
 function round(n: number, p = 2): number {
@@ -62,6 +90,83 @@ function uncertaintyEllipse(radiusM: number, color: string): Cesium.EllipseGraph
   return new Cesium.EllipseGraphics({
     semiMajorAxis: radiusM,
     semiMinorAxis: radiusM,
+    material: new Cesium.ColorMaterialProperty(c.withAlpha(0.14)),
+    outline: true,
+    outlineColor: c.withAlpha(0.5),
+    outlineWidth: 1,
+    height: 0,
+    classificationType: Cesium.ClassificationType.TERRAIN,
+  });
+}
+
+// --- Admin-shape polygon (goal state; ellipse above is the fallback) --------
+
+/** Absolute shoelace area of a ring in degree² — only used to RANK parts. */
+function ringArea(ring: number[][]): number {
+  let s = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    s += (ring[j]![0]! + ring[i]![0]!) * (ring[j]![1]! - ring[i]![1]!);
+  }
+  return Math.abs(s / 2);
+}
+
+/** Ray-cast point-in-ring test (lon/lat degrees). */
+function ringContains(ring: number[][], lon: number, lat: number): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i]![0]!;
+    const yi = ring[i]![1]!;
+    const xj = ring[j]![0]!;
+    const yj = ring[j]![1]!;
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// GeoJSON → PolygonHierarchy (outer ring + holes). MultiPolygon CHOICE: one
+// PolygonGraphics holds ONE hierarchy, so we render a single part — the part
+// whose outer ring CONTAINS the event point, falling back to the largest-area
+// part (covers points that sit just outside a simplified boundary). Never
+// throws — returns null on any malformed input so the ellipse fallback stays.
+function polygonHierarchy(
+  geom: ShapeGeometry,
+  lon: number,
+  lat: number,
+): Cesium.PolygonHierarchy | null {
+  try {
+    let rings: number[][][];
+    if (geom.type === 'Polygon') {
+      rings = geom.coordinates as number[][][];
+    } else {
+      const parts = geom.coordinates as number[][][][];
+      let pick = parts.find((p) => p[0] != null && ringContains(p[0], lon, lat));
+      if (!pick) {
+        pick = [...parts].sort((a, b) => ringArea(b[0] ?? []) - ringArea(a[0] ?? []))[0];
+      }
+      if (!pick) return null;
+      rings = pick;
+    }
+    const outer = rings[0];
+    if (!outer || outer.length < 3) return null;
+    const toCart = (ring: number[][]): Cesium.Cartesian3[] =>
+      Cesium.Cartesian3.fromDegreesArray(ring.flatMap(([x, y]) => [x!, y!]));
+    const holes = rings.slice(1).map((h) => new Cesium.PolygonHierarchy(toCart(h)));
+    return new Cesium.PolygonHierarchy(toCart(outer), holes);
+  } catch {
+    return null;
+  }
+}
+
+// Same visual treatment as uncertaintyEllipse (0.14 severity fill, 0.5-alpha
+// outline, ground-clamped) so the ellipse→polygon swap only changes the SHAPE.
+// Static ConstantProperty only — requestRenderMode invariant.
+function shapePolygon(
+  hierarchy: Cesium.PolygonHierarchy,
+  color: string,
+): Cesium.PolygonGraphics {
+  const c = Cesium.Color.fromCssColorString(color);
+  return new Cesium.PolygonGraphics({
+    hierarchy: new Cesium.ConstantProperty(hierarchy),
     material: new Cesium.ColorMaterialProperty(c.withAlpha(0.14)),
     outline: true,
     outlineColor: c.withAlpha(0.5),
@@ -111,7 +216,16 @@ export function buildAreas(kind: AreaKind, json: unknown): Area[] {
     const feats = (j.features as Record<string, unknown>[]) ?? [];
     const cells = new Map<
       string,
-      { lon: number; lat: number; ment: number; root: string; label: string; rad: number | null }
+      {
+        lon: number;
+        lat: number;
+        ment: number;
+        root: string;
+        label: string;
+        rad: number | null;
+        iso3: string | null;
+        lvl: ShapeLevel | null;
+      }
     >();
     for (const f of feats) {
       const g = (f.geometry as { coordinates?: [number, number] }) ?? {};
@@ -121,10 +235,25 @@ export function buildAreas(kind: AreaKind, json: unknown): Area[] {
       const ment = typeof p.mentions === 'number' ? p.mentions : 1;
       const root = String(p.root ?? '');
       const rad = uncertaintyRadiusM(p.radius_m);
+      const iso3 = iso3Of(p.iso3);
+      const lvl = shapeLevelOf(p.shape_level);
       const cellKey = `${round(c[0], 1)}|${round(c[1], 1)}`;
       const prev = cells.get(cellKey);
       if (!prev) {
-        cells.set(cellKey, { lon: c[0], lat: c[1], ment, root, label: String(p.label ?? 'armed clash'), rad });
+        cells.set(cellKey, {
+          lon: c[0],
+          lat: c[1],
+          ment,
+          root,
+          label: String(p.label ?? 'armed clash'),
+          rad,
+          // Merged-cell shape CHOICE: the DOMINANT member is the FIRST one —
+          // its coords anchor the cell (and the glyph), so the admin lookup
+          // point matches what's drawn. Its iso3/shape_level ride along; a
+          // later member only fills them in if the anchor member had none.
+          iso3: iso3 && lvl ? iso3 : null,
+          lvl: iso3 && lvl ? lvl : null,
+        });
       } else {
         prev.ment += ment;
         if (ment > 0 && String(p.label ?? '').length) {
@@ -134,6 +263,10 @@ export function buildAreas(kind: AreaKind, json: unknown): Area[] {
         if (root === '20') prev.root = '20';
         // merged cell keeps the LARGEST plausible area of its member events
         if (rad != null) prev.rad = prev.rad == null ? rad : Math.max(prev.rad, rad);
+        if (prev.iso3 == null && iso3 && lvl) {
+          prev.iso3 = iso3;
+          prev.lvl = lvl;
+        }
       }
     }
     return [...cells.entries()].map(([cellKey, v]): Area => {
@@ -149,6 +282,8 @@ export function buildAreas(kind: AreaKind, json: unknown): Area[] {
         // strip the per-event "(Nx)" the backend baked in, show the merged total.
         label: v.ment >= 6 ? `${v.label.replace(/\s*\(\d+x\)\s*$/, '')} (${v.ment}x)`.slice(0, 80) : '',
         radiusM: v.rad,
+        iso3: v.iso3,
+        shapeLevel: v.lvl,
       };
     });
   }
@@ -171,6 +306,8 @@ export function buildAreas(kind: AreaKind, json: unknown): Area[] {
           pulse: sym.pulse,
           label: `${level.toUpperCase()} · ${narrative}`.slice(0, 80),
           radiusM: uncertaintyRadiusM(inc.radius_m),
+          iso3: iso3Of(inc.iso3),
+          shapeLevel: shapeLevelOf(inc.shape_level),
         };
       })
       .filter((a): a is Area => a != null);
@@ -190,8 +327,10 @@ export function buildAreas(kind: AreaKind, json: unknown): Area[] {
         color: sym.color,
         pulse: sym.pulse,
         label: `INTERNET OUTAGE · ${p.name}${p.score ? ` (${Math.round(p.score)})` : ''}`,
-        // IODA events carry no meaningful point-uncertainty radius.
+        // IODA events carry no meaningful point-uncertainty radius or shape.
         radiusM: null,
+        iso3: null,
+        shapeLevel: null,
       };
     })
     .filter((a): a is Area => a != null);
@@ -200,6 +339,13 @@ export function buildAreas(kind: AreaKind, json: unknown): Area[] {
 export class AreaAdapter implements LayerAdapter {
   readonly ds: Cesium.CustomDataSource;
   private readonly entities = new Map<string, Cesium.Entity>();
+  // entity key → admin shape currently APPLIED as polygon graphics.
+  private readonly appliedShape = new Map<string, { sk: string; color: string }>();
+  // entity key → shape the latest render pass WANTS (drives the async apply).
+  private readonly shapeWant = new Map<
+    string,
+    { sk: string; color: string; query: ShapeQuery }
+  >();
   private timer: number | null = null;
   private renderTimer: number | null = null;
   private pulsingCount = 0;
@@ -267,11 +413,25 @@ export class AreaAdapter implements LayerAdapter {
 
   private render(areas: Area[]): void {
     const seen = new Set<string>();
+    // Shape queries for entities whose admin polygon isn't resolved yet.
+    const shapeQueue: ShapeQuery[] = [];
     this.pulsingCount = 0;
     for (const a of areas) {
       seen.add(a.key);
       if (a.pulse) this.pulsingCount++;
       const image = eventIcon(a.glyph, a.color);
+      // Admin-shape want for this pass. The shape key embeds the coords, so a
+      // feature whose position moved on a later poll gets a NEW key and its
+      // shape is re-evaluated (polygon dropped back to ellipse until the new
+      // shape resolves).
+      const query: ShapeQuery | null =
+        a.iso3 && a.shapeLevel
+          ? { lat: a.lat, lon: a.lon, level: a.shapeLevel, iso3: a.iso3 }
+          : null;
+      const sk = query ? shapeKey(query) : null;
+      if (query && sk) this.shapeWant.set(a.key, { sk, color: a.color, query });
+      else this.shapeWant.delete(a.key);
+      const cached = sk ? cachedShape(sk) : undefined;
       const existing = this.entities.get(a.key);
       if (existing) {
         existing.position = new Cesium.ConstantPositionProperty(
@@ -279,17 +439,41 @@ export class AreaAdapter implements LayerAdapter {
         );
         if (existing.billboard) existing.billboard.image = new Cesium.ConstantProperty(image);
         if (existing.label) existing.label.text = new Cesium.ConstantProperty(a.label);
-        // Upsert the uncertainty ellipse in place: add/replace when radius_m
-        // (re)appears or changes, drop it when the feature loses it. Replacing
-        // the whole EllipseGraphics only on a radius change avoids a geometry
-        // rebuild on every poll for the steady case.
-        const prevR = existing.ellipse?.semiMajorAxis?.getValue(Cesium.JulianDate.now()) as
-          | number
-          | undefined;
-        if (a.radiusM == null) {
-          if (existing.ellipse) existing.ellipse = undefined;
-        } else if (prevR !== a.radiusM) {
-          existing.ellipse = uncertaintyEllipse(a.radiusM, a.color);
+        // Goal state: the resolved admin polygon (swapped IN PLACE on the same
+        // entity — billboard/label untouched, never remove+add).
+        let polygonized = false;
+        if (sk && cached && cached !== SHAPE_MISS) {
+          const applied = this.appliedShape.get(a.key);
+          if (applied?.sk === sk && applied.color === a.color && existing.polygon) {
+            polygonized = true; // already showing the right shape+colour
+          } else {
+            const hier = polygonHierarchy(cached, a.lon, a.lat);
+            if (hier) {
+              existing.ellipse = undefined;
+              existing.polygon = shapePolygon(hier, a.color);
+              this.appliedShape.set(a.key, { sk, color: a.color });
+              polygonized = true;
+            }
+          }
+        }
+        if (!polygonized) {
+          // Fallback (shape pending, missed, malformed, or feature lost its
+          // shape props / moved): drop any stale polygon, keep the ellipse.
+          if (existing.polygon) existing.polygon = undefined;
+          this.appliedShape.delete(a.key);
+          // Upsert the uncertainty ellipse in place: add/replace when radius_m
+          // (re)appears or changes, drop it when the feature loses it.
+          // Replacing the whole EllipseGraphics only on a radius change avoids
+          // a geometry rebuild on every poll for the steady case.
+          const prevR = existing.ellipse?.semiMajorAxis?.getValue(Cesium.JulianDate.now()) as
+            | number
+            | undefined;
+          if (a.radiusM == null) {
+            if (existing.ellipse) existing.ellipse = undefined;
+          } else if (prevR !== a.radiusM) {
+            existing.ellipse = uncertaintyEllipse(a.radiusM, a.color);
+          }
+          if (query && cached === undefined) shapeQueue.push(query);
         }
         continue;
       }
@@ -316,8 +500,21 @@ export class AreaAdapter implements LayerAdapter {
           scaleByDistance: new Cesium.NearFarScalar(3.0e5, 1.0, 1.2e7, 0.5),
         },
       };
-      // Plausible-area disc under the glyph when the backend supplied radius_m.
-      if (a.radiusM != null) opts.ellipse = uncertaintyEllipse(a.radiusM, a.color);
+      // Resolved admin polygon when already cached; otherwise the plausible-
+      // area disc when the backend supplied radius_m (+ queue the shape fetch).
+      let polygonized = false;
+      if (sk && cached && cached !== SHAPE_MISS) {
+        const hier = polygonHierarchy(cached, a.lon, a.lat);
+        if (hier) {
+          opts.polygon = shapePolygon(hier, a.color);
+          this.appliedShape.set(a.key, { sk, color: a.color });
+          polygonized = true;
+        }
+      }
+      if (!polygonized) {
+        if (a.radiusM != null) opts.ellipse = uncertaintyEllipse(a.radiusM, a.color);
+        if (query && cached === undefined) shapeQueue.push(query);
+      }
       // Label only the prominent events (low-intensity cells stay a bare glyph
       // so the map doesn't smear into a wall of text).
       if (a.label) {
@@ -344,8 +541,39 @@ export class AreaAdapter implements LayerAdapter {
       if (!seen.has(key)) {
         this.ds.entities.remove(ent);
         this.entities.delete(key);
+        this.appliedShape.delete(key);
+        this.shapeWant.delete(key);
       }
     }
     this.props.ctx.viewer.scene.requestRender();
+    // Resolve missing admin shapes AFTER the upsert pass. eventShapes batches
+    // (≤200/request), keeps one request in flight, supersedes queued work with
+    // a newer poll's, and caches misses for the session.
+    if (shapeQueue.length) {
+      requestEventShapes(shapeQueue, () => this.applyResolvedShapes());
+    }
+  }
+
+  // Apply freshly cached admin shapes to live entities: ellipse → polygon on
+  // the SAME entity, then ONE scene render for the whole batch (mirrors the
+  // single requestRender at the end of render() — requestRenderMode friendly).
+  private applyResolvedShapes(): void {
+    if (this.disposed) return;
+    let applied = false;
+    for (const [key, want] of this.shapeWant) {
+      const ent = this.entities.get(key);
+      if (!ent) continue;
+      const prev = this.appliedShape.get(key);
+      if (prev?.sk === want.sk && prev.color === want.color && ent.polygon) continue;
+      const cached = cachedShape(want.sk);
+      if (!cached || cached === SHAPE_MISS) continue; // miss/pending → ellipse stays
+      const hier = polygonHierarchy(cached, want.query.lon, want.query.lat);
+      if (!hier) continue;
+      ent.ellipse = undefined;
+      ent.polygon = shapePolygon(hier, want.color);
+      this.appliedShape.set(key, { sk: want.sk, color: want.color });
+      applied = true;
+    }
+    if (applied) this.props.ctx.viewer.scene.requestRender();
   }
 }

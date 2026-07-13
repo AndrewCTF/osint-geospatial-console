@@ -19,6 +19,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import Settings, get_settings
+from app.geo.adminshapes import country_name_to_iso3
 from app.intel.geo import feature_lonlat, haversine_km
 from app.upstream import cache, get_client
 
@@ -227,6 +228,7 @@ async def _load_acled(settings: Settings, days: int = 7) -> dict[str, Any]:
             except (KeyError, ValueError):
                 continue
             geo_precision = parse_geo_precision(row.get("geo_precision"))
+            country = row.get("country")
             feats.append(
                 {
                     "type": "Feature",
@@ -237,7 +239,7 @@ async def _load_acled(settings: Settings, days: int = 7) -> dict[str, Any]:
                         "sub_event_type": row.get("sub_event_type"),
                         "actor1": row.get("actor1"),
                         "actor2": row.get("actor2"),
-                        "country": row.get("country"),
+                        "country": country,
                         "fatalities": row.get("fatalities"),
                         "notes": row.get("notes"),
                         "date": row.get("event_date"),
@@ -247,6 +249,15 @@ async def _load_acled(settings: Settings, days: int = 7) -> dict[str, Any]:
                         # radius_m is None when precision is unknown.
                         "geo_precision": geo_precision,
                         "radius_m": radius_for_geo_precision(geo_precision),
+                        # Country + admin level so the frontend can shade the
+                        # REAL admin unit. ACLED geo_precision 1=exact,
+                        # 2=part of a larger settlement, 3=region/province.
+                        "iso3": country_name_to_iso3(country) if country else None,
+                        "shape_level": (
+                            "adm2" if geo_precision in (1, 2)
+                            else "adm1" if geo_precision == 3
+                            else None
+                        ),
                     },
                 }
             )

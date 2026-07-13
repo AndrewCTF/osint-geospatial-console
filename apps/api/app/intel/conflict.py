@@ -24,6 +24,7 @@ from typing import Any
 
 import httpx
 
+from app.geo.adminshapes import fips_to_iso3
 from app.upstream import cache, get_client
 
 # CAMEO event roots we treat as armed conflict.
@@ -50,6 +51,7 @@ _C_A1CC, _C_A2CC = 7, 17
 _C_CODE, _C_ROOT = 26, 28
 _C_GOLD, _C_MENT = 30, 31
 _C_GEOTYPE = 51  # ActionGeo_Type: 1=country 2=US state 3=US city 4=world city 5=world state
+_C_GEOCC = 53  # ActionGeo_CountryCode — FIPS 10-4, NOT ISO (UP=Ukraine, IZ=Iraq)
 _C_LAT, _C_LON = 56, 57
 _C_URL = 60
 
@@ -57,6 +59,17 @@ _C_URL = 60
 # (3/4) is tight; state-level (2/5) is broad; country-level (1) or unknown is
 # too coarse for a meaningful area — no radius is fabricated for it.
 _GEO_TYPE_RADIUS_M: dict[int, float] = {3: 8000.0, 4: 8000.0, 2: 60000.0, 5: 60000.0}
+
+# ActionGeo_Type → admin level whose real boundary the frontend should shade
+# (via POST /api/geo/event-shapes): city-level → district (ADM2), state-level
+# → region (ADM1), country-level/unknown → none.
+_GEO_TYPE_SHAPE_LEVEL: dict[int, str] = {3: "adm2", 4: "adm2", 2: "adm1", 5: "adm1"}
+
+
+def shape_level_for_geo_type(geo_type: int | None) -> str | None:
+    """Admin-boundary level ("adm1"/"adm2") matching an ActionGeo_Type code;
+    None for country-level or unknown precision."""
+    return _GEO_TYPE_SHAPE_LEVEL.get(geo_type) if geo_type is not None else None
 
 
 def parse_geo_type(row: list[str]) -> int | None:
@@ -188,6 +201,10 @@ async def conflict_events(hours: int = 6) -> dict[str, Any]:
                         # radius_m is None for country-level/unknown geocoding.
                         "geo_type": geo_type,
                         "radius_m": radius_for_geo_type(geo_type),
+                        # Country + admin level for real-boundary shading
+                        # (POST /api/geo/event-shapes); None when underivable.
+                        "iso3": fips_to_iso3(c[_C_GEOCC]),
+                        "shape_level": shape_level_for_geo_type(geo_type),
                         # Label the map draws: "RUSSIA → UKRAINE · air strike (12x)".
                         "label": f"{a1} → {a2} · {what} ({ment}x)",
                     },

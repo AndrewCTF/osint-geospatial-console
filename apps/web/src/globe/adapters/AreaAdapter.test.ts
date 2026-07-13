@@ -1,7 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as Cesium from 'cesium';
+
+vi.mock('../../transport/http.js', () => ({
+  apiFetch: vi.fn(),
+}));
+
+import { apiFetch } from '../../transport/http.js';
 import { AreaAdapter, buildAreas } from './AreaAdapter.js';
+import { resetEventShapeCache, shapeKey, cachedShape, SHAPE_MISS } from './eventShapes.js';
 import type { AdapterCtx } from './types.js';
+
+const mockedFetch = vi.mocked(apiFetch);
 
 // radius_m uncertainty ellipse: a conflict/incident feature carrying a
 // plausible-area radius (meters) renders a translucent ground ellipse on the
@@ -145,5 +154,242 @@ describe('AreaAdapter radius_m uncertainty ellipse', () => {
     // radius reappears -> ellipse restored on the same entity.
     render(adapter, mk(9_000));
     expect(adapter.ds.entities.getById(key)?.ellipse?.semiMajorAxis?.getValue(NOW)).toBe(9_000);
+  });
+});
+
+// Admin-shape resolution: features carrying iso3 + shape_level get their REAL
+// admin polygon (POST /api/geo/event-shapes, mocked here) swapped in for the
+// uncertainty ellipse on the SAME entity; miss / malformed geometry keeps the
+// ellipse; the module-level cache prevents refetching a key within a session.
+
+// Event at (30.5, 50.5) → server key with lat/lon rounded to 3 decimals.
+const SHAPE_KEY = shapeKey({ iso3: 'UKR', level: 'adm1', lat: 50.5, lon: 30.5 });
+
+function shapedAreas() {
+  return buildAreas(
+    'conflict',
+    conflictJson(
+      feat(30.5, 50.5, {
+        label: 'air strike',
+        root: '19',
+        mentions: 3,
+        radius_m: 50_000,
+        iso3: 'UKR',
+        shape_level: 'adm1',
+      }),
+    ),
+  );
+}
+
+// A simplified admin1 square around the event point, with one hole.
+const ADM1_GEOMETRY = {
+  type: 'Polygon',
+  coordinates: [
+    [
+      [30, 50],
+      [31, 50],
+      [31, 51],
+      [30, 51],
+      [30, 50],
+    ],
+    [
+      [30.1, 50.1],
+      [30.2, 50.1],
+      [30.2, 50.2],
+      [30.1, 50.2],
+      [30.1, 50.1],
+    ],
+  ],
+};
+
+function shapeResponse(body: unknown): Response {
+  return { ok: true, json: async () => body } as unknown as Response;
+}
+
+describe('AreaAdapter admin-shape polygons (/api/geo/event-shapes)', () => {
+  beforeEach(() => {
+    resetEventShapeCache();
+    mockedFetch.mockReset();
+  });
+
+  it('iso3+shape_level feature: ellipse is replaced by the admin polygon on the same entity', async () => {
+    mockedFetch.mockResolvedValue(
+      shapeResponse({
+        shapes: [
+          { keys: [SHAPE_KEY], id: 'UKR.13_1', name: 'Kyiv', level: 'adm1', iso3: 'UKR', geometry: ADM1_GEOMETRY },
+        ],
+        misses: [],
+      }),
+    );
+    const adapter = makeAdapter();
+    const areas = shapedAreas();
+    expect(areas[0]!.iso3).toBe('UKR');
+    expect(areas[0]!.shapeLevel).toBe('adm1');
+    render(adapter, areas);
+    const ent = adapter.ds.entities.getById(areas[0]!.key)!;
+    // Circle fallback shows until the shape resolves.
+    expect(ent.ellipse).toBeDefined();
+
+    await vi.waitFor(() => expect(ent.polygon).toBeDefined());
+    // POSTed the documented body shape to the right endpoint via apiFetch.
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockedFetch.mock.calls[0]!;
+    expect(url).toBe('/api/geo/event-shapes');
+    expect(JSON.parse(String(init!.body))).toEqual({
+      queries: [{ lat: 50.5, lon: 30.5, level: 'adm1', iso3: 'UKR' }],
+    });
+    // Ellipse removed; polygon carries the real ring (outer + hole), static.
+    expect(ent.ellipse).toBeUndefined();
+    const hier = ent.polygon!.hierarchy!.getValue(NOW) as Cesium.PolygonHierarchy;
+    expect(hier.positions.length).toBeGreaterThan(2);
+    expect(hier.holes).toHaveLength(1);
+    expect(ent.polygon!.hierarchy).toBeInstanceOf(Cesium.ConstantProperty);
+    // Same severity treatment as the ellipse: 0.14 fill / 0.5 outline, grounded.
+    const fill = (ent.polygon!.material as Cesium.ColorMaterialProperty).color!.getValue(NOW);
+    expect(fill.alpha).toBeCloseTo(0.14, 5);
+    expect(fill.withAlpha(1).toCssHexString().toLowerCase()).toBe('#ef4444');
+    expect(ent.polygon!.outlineColor!.getValue(NOW).alpha).toBeCloseTo(0.5, 5);
+    expect(ent.polygon!.height!.getValue(NOW)).toBe(0);
+    expect(ent.polygon!.classificationType!.getValue(NOW)).toBe(Cesium.ClassificationType.TERRAIN);
+    // Billboard glyph untouched — the swap never recreates the entity.
+    expect(ent.billboard).toBeDefined();
+  });
+
+  it('server miss: ellipse retained, polygon never applied, miss cached', async () => {
+    mockedFetch.mockResolvedValue(shapeResponse({ shapes: [], misses: [SHAPE_KEY] }));
+    const adapter = makeAdapter();
+    const areas = shapedAreas();
+    render(adapter, areas);
+    await vi.waitFor(() => expect(cachedShape(SHAPE_KEY)).toBe(SHAPE_MISS));
+    const ent = adapter.ds.entities.getById(areas[0]!.key)!;
+    expect(ent.polygon).toBeUndefined();
+    expect(ent.ellipse?.semiMajorAxis?.getValue(NOW)).toBe(50_000);
+    // A second pass never refetches a cached miss.
+    render(adapter, shapedAreas());
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('malformed geometry: ellipse retained, no throw', async () => {
+    mockedFetch.mockResolvedValue(
+      shapeResponse({
+        shapes: [
+          { keys: [SHAPE_KEY], id: 'x', name: 'x', level: 'adm1', iso3: 'UKR', geometry: { type: 'Polygon', coordinates: 'garbage' } },
+        ],
+        misses: [],
+      }),
+    );
+    const adapter = makeAdapter();
+    const areas = shapedAreas();
+    render(adapter, areas);
+    await vi.waitFor(() => expect(cachedShape(SHAPE_KEY)).toBe(SHAPE_MISS));
+    const ent = adapter.ds.entities.getById(areas[0]!.key)!;
+    expect(ent.polygon).toBeUndefined();
+    expect(ent.ellipse?.semiMajorAxis?.getValue(NOW)).toBe(50_000);
+  });
+
+  it('cache prevents duplicate fetches across render passes; polygon survives repolls', async () => {
+    mockedFetch.mockResolvedValue(
+      shapeResponse({
+        shapes: [
+          { keys: [SHAPE_KEY], id: 'UKR.13_1', name: 'Kyiv', level: 'adm1', iso3: 'UKR', geometry: ADM1_GEOMETRY },
+        ],
+        misses: [],
+      }),
+    );
+    const adapter = makeAdapter();
+    render(adapter, shapedAreas());
+    const key = shapedAreas()[0]!.key;
+    const ent = adapter.ds.entities.getById(key)!;
+    await vi.waitFor(() => expect(ent.polygon).toBeDefined());
+    const firstPolygon = ent.polygon;
+    // Later poll, same feature: cache hit — no second fetch, polygon stays,
+    // entity not recreated, ellipse not resurrected.
+    render(adapter, shapedAreas());
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    expect(adapter.ds.entities.values).toHaveLength(1);
+    expect(adapter.ds.entities.getById(key)).toBe(ent);
+    expect(ent.polygon).toBe(firstPolygon);
+    expect(ent.ellipse).toBeUndefined();
+    // A second adapter (fresh instance, same session) also hits the cache.
+    const adapter2 = makeAdapter();
+    render(adapter2, shapedAreas());
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    expect(adapter2.ds.entities.getById(key)?.polygon).toBeDefined();
+  });
+
+  it('MultiPolygon: renders the part containing the event point', async () => {
+    const far = [
+      [
+        [10, 10],
+        [12, 10],
+        [12, 12],
+        [10, 12],
+        [10, 10],
+      ],
+    ];
+    mockedFetch.mockResolvedValue(
+      shapeResponse({
+        shapes: [
+          {
+            keys: [SHAPE_KEY],
+            id: 'x',
+            name: 'x',
+            level: 'adm1',
+            iso3: 'UKR',
+            geometry: { type: 'MultiPolygon', coordinates: [far, ADM1_GEOMETRY.coordinates] },
+          },
+        ],
+        misses: [],
+      }),
+    );
+    const adapter = makeAdapter();
+    const areas = shapedAreas();
+    render(adapter, areas);
+    const ent = adapter.ds.entities.getById(areas[0]!.key)!;
+    await vi.waitFor(() => expect(ent.polygon).toBeDefined());
+    const hier = ent.polygon!.hierarchy!.getValue(NOW) as Cesium.PolygonHierarchy;
+    // The containing part (the square around 30.5,50.5), not the far one.
+    const carto = Cesium.Cartographic.fromCartesian(hier.positions[0]!);
+    expect(Cesium.Math.toDegrees(carto.longitude)).toBeCloseTo(30, 3);
+    expect(Cesium.Math.toDegrees(carto.latitude)).toBeCloseTo(50, 3);
+  });
+
+  it('feature that moved on a later poll drops the stale polygon back to the ellipse and refetches', async () => {
+    mockedFetch.mockResolvedValue(
+      shapeResponse({
+        shapes: [
+          { keys: [SHAPE_KEY], id: 'x', name: 'x', level: 'adm1', iso3: 'UKR', geometry: ADM1_GEOMETRY },
+        ],
+        misses: [],
+      }),
+    );
+    const adapter = makeAdapter();
+    render(adapter, shapedAreas());
+    const key = shapedAreas()[0]!.key;
+    const ent = adapter.ds.entities.getById(key)!;
+    await vi.waitFor(() => expect(ent.polygon).toBeDefined());
+    // Same merge cell (0.1° rounding → same entity key), new exact coords →
+    // new shape key → re-evaluated: polygon dropped, ellipse fallback returns,
+    // and a fetch for the NEW key goes out.
+    const moved = buildAreas(
+      'conflict',
+      conflictJson(
+        feat(30.52, 50.52, {
+          label: 'air strike',
+          root: '19',
+          mentions: 3,
+          radius_m: 50_000,
+          iso3: 'UKR',
+          shape_level: 'adm1',
+        }),
+      ),
+    );
+    expect(moved[0]!.key).toBe(key);
+    render(adapter, moved);
+    expect(ent.polygon).toBeUndefined();
+    expect(ent.ellipse).toBeDefined();
+    await vi.waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+    const body = JSON.parse(String(mockedFetch.mock.calls[1]![1]!.body));
+    expect(body.queries[0]).toEqual({ lat: 50.52, lon: 30.52, level: 'adm1', iso3: 'UKR' });
   });
 });

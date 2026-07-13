@@ -101,13 +101,14 @@ Ontology (2026-07-07, docs/decisions.md#ontology-local-first-store-2026-07-07):
 - Backend tests from the **repo ROOT** (from `apps/api` the `.env` auth
   resolves → wall of 401s):
   `OSINT_DISABLE_BACKGROUND=1 apps/api/.venv/bin/pytest apps/api -q`
-  Baseline: **1583 passed + 1 skipped** (the skip is the opt-in live probe;
-  measured 2026-07-13 on branch intel-depth-polish after the intel-depth wave
-  — conflict-event precision→radius areas, country profile/security/AI-brief,
-  selection-brief polish, markdown AI rendering — up from 1540 after the
-  rot-fix wave, 1539 after the evidence-locker hardening wave, 1536 after
-  the selection-brief enrichment-fusion wave, 1533 after the evidence-locker
-  + case-export wave, 1507 after the bug-fix wave (PR #38) and 1294 on
+  Baseline: **1630 passed + 1 skipped** (the skip is the opt-in live probe;
+  measured 2026-07-13 on branch intel-depth-polish after the real-place
+  strike-areas wave — geoBoundaries admin-polygon resolver + feed iso3/
+  shape_level enrichment + AreaAdapter polygon rendering — up from 1583
+  after the intel-depth wave, 1540 after the rot-fix wave, 1539 after the
+  evidence-locker hardening wave, 1536 after the selection-brief
+  enrichment-fusion wave, 1533 after the evidence-locker + case-export wave,
+  1507 after the bug-fix wave (PR #38) and 1294 on
   w5-places-airspace-enrichment).
   Never commit below the baseline you inherited; update this number when you raise it.
 - `pnpm -r typecheck` green at every commit boundary. `bash scripts/verify.sh`
