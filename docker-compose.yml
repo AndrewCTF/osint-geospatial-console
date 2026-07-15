@@ -28,6 +28,15 @@ services:
       # up` with no .env copied — the code default is 168h (7 days); 48h only
       # applies automatically if .env.example got copied to .env.
       HISTORY_RETENTION_HOURS: 48
+      # ── Owned replay (the flagship) ──────────────────────────────────────
+      # This DEV stack keeps a rolling 48h window by default (it runs
+      # --reload and is not meant to be a durable recorder). To turn the
+      # archive profile ON — unlimited local history sized to a disk budget,
+      # persisted in the osint_data_dev volume — uncomment the two lines
+      # below (or copy them into your .env). docker-compose.prod.yml ships
+      # with the archive profile already on.
+      # ARCHIVE_MODE: 1
+      # HISTORY_DISK_BUDGET_GB: 5
       # Single-box DEV default: serve the compute/LLM endpoints on a keyless
       # boot instead of 503-ing them. Without this the advertised quickstart
       # hits dead Reports tabs and any LLM-backed feature. Safe here because

@@ -213,7 +213,7 @@ export function ConsoleShell({
         }}
       >
         {sim
-          ? 'Unclassified // Exercise — Simulated data · not real-world'
+          ? 'Unclassified // Exercise · Simulated data · not real-world'
           : 'Unclassified // Open-source intelligence'}
       </div>
       <header
@@ -294,7 +294,7 @@ export function ConsoleShell({
                     onClick={toggleWide}
                     aria-pressed={wide}
                     aria-label={wide ? 'Collapse inspector to default width' : 'Widen inspector for two-column detail'}
-                    title={wide ? 'Collapse to default width' : 'Widen — two-column detail'}
+                    title={wide ? 'Collapse to default width' : 'Widen for two-column detail'}
                     className="text-txt-3 hover:text-txt-0 px-1 h-5 flex items-center rounded-sm hover:bg-bg-3"
                   >
                     {wide ? (
@@ -307,7 +307,7 @@ export function ConsoleShell({
                     type="button"
                     onClick={() => detachInspector(INSPECTOR_PANEL_ID, { w: Math.max(rightW, 420) })}
                     aria-label="Detach inspector into a floating window"
-                    title="Detach — pop out into a movable window"
+                    title="Detach into a movable window"
                     className="text-txt-3 hover:text-accent px-1 h-5 flex items-center rounded-sm hover:bg-bg-3"
                   >
                     <PanelRightOpen size={14} strokeWidth={1.75} aria-hidden />
@@ -462,15 +462,15 @@ function MapHealthStrip(): JSX.Element {
       ? 'Alert WebSocket (/ws/alerts) is live'
       : ws === 'connecting'
         ? 'Connecting to /ws/alerts…'
-        : '/ws/alerts is down — alerts may be stale';
+        : '/ws/alerts is down; alerts may be stale';
 
   // Replay posture: playing = the clock advances (live tracking); paused =
   // frozen / scrubbing a replay. The dot is informational (accent vs neutral).
   const clockText = playing ? 'live' : 'paused';
   const clockTone = playing ? 'ok' : 'neutral';
   const clockTitle = playing
-    ? 'Timeline is advancing — tracking live time'
-    : 'Timeline paused — frozen / replay posture';
+    ? 'Timeline is advancing, tracking live time'
+    : 'Timeline paused (frozen / replay posture)';
 
   return (
     <div

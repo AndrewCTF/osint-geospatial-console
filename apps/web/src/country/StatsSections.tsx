@@ -40,7 +40,7 @@ function GridSkeleton(): JSX.Element {
 export function WorldBankSection({ state }: { state: FetchState<WorldBankResponse> }): JSX.Element {
   const civil = (state.data?.indicators ?? []).filter((i) => !isMilitaryIndicator(i.id));
   return (
-    <Card title="Statistics — World Bank" meta={state.data ? `${state.data.source} · military series above` : undefined}>
+    <Card title="Statistics · World Bank" meta={state.data ? `${state.data.source} · military series above` : undefined}>
       {state.loading && <GridSkeleton />}
       {!state.loading && state.error && (
         <div className="mono text-[10px] text-alert-fg">Failed: {state.error}</div>

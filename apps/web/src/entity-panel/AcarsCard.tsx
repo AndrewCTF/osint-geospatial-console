@@ -66,7 +66,7 @@ export function AcarsCard({
       {err && <p className="text-[11px] text-txt-3 mt-1.5">datalink feed unavailable</p>}
       {msgs && msgs.length === 0 && (
         <p className="text-[11px] text-txt-3 mt-1.5 leading-snug">
-          No ACARS in the recent feed (last 100 msgs, airframes.io community coverage — dense over
+          No ACARS in the recent feed (last 100 msgs; airframes.io community coverage is dense over
           NA/EU/oceanic tracks). This aircraft hasn’t broadcast a datalink message in that window.
         </p>
       )}

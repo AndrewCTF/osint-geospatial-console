@@ -59,14 +59,14 @@ async def ack_brief(bid: str) -> dict[str, Any]:
 
 def _elaborate_prompt(brief: dict[str, Any]) -> tuple[str, str]:
     """Grounded system+user prompt for a deeper analytic write-up of one brief."""
-    system = (
+    system = llm.with_prose_style(
         "You are a senior OSINT watch analyst. You are handed a watch-officer "
         "brief: a fused, cited convergence of live signals the automated loop "
         "flagged. Write 3-5 sentences of markdown that go DEEPER than the "
         "one-line narrative: (1) what this convergence most likely represents; "
-        "(2) why — grounded in the specific evidence rows (cite the ids, "
+        "(2) why, grounded in the specific evidence rows (cite the ids, "
         "distances, gaps); (3) what would confirm or refute it; (4) the single "
-        "most useful next action. Ground every claim in the brief — never "
+        "most useful next action. Ground every claim in the brief. Never "
         "invent ids, positions, or events, and never overstate intent. End "
         "with a bold **Confidence: low | medium | high** reflecting how much "
         "the evidence supports the read."

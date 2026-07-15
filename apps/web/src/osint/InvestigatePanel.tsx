@@ -78,7 +78,7 @@ export function InvestigatePanel(): JSX.Element {
       <div style={{ fontSize: 11, color: 'var(--txt-3)' }}>
         Domain / IP: DNS · WHOIS · certs · subdomains · ASN/BGP · Tor/C2 threat feeds. Email /
         username: Gravatar · GitHub/GitLab · handle presence · breaches · reputation · Reddit
-        history. Also: url · file hash · btc/eth wallet · ASN — or toggle Company for a
+        history. Also: url · file hash · btc/eth wallet · ASN. Toggle Company for a
         free-text org/sanctions/registry search.
       </div>
       <div style={{ display: 'flex', gap: 6 }}>
@@ -107,7 +107,7 @@ export function InvestigatePanel(): JSX.Element {
       {companyMode && (
         <div style={{ fontSize: 11, color: 'var(--txt-3)' }}>
           Company mode: searches SEC EDGAR, OpenSanctions, OpenCorporates, OpenOwnership, Aleph,
-          Wikidata by name — mints an <code>org</code> node with officers/sanctions linked in.
+          Wikidata by name: mints an <code>org</code> node with officers/sanctions linked in.
         </div>
       )}
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

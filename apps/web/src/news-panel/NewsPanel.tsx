@@ -320,7 +320,7 @@ export function NewsPanel(): JSX.Element {
                   {ev.rhetoric_flags.map((r, j) => (
                     <li key={j} className="mono text-[11px] text-txt-1 leading-snug">
                       <span className="text-txt-2">{r.who}:</span> {r.claim}
-                      {r.note ? <span className="text-alert"> — {r.note}</span> : null}
+                      {r.note ? <span className="text-alert"> ({r.note})</span> : null}
                     </li>
                   ))}
                 </ul>
@@ -333,7 +333,7 @@ export function NewsPanel(): JSX.Element {
                 <ul className="mt-1 flex flex-col gap-0.5">
                   {ev.bias_flags.map((b, j) => (
                     <li key={j} className="mono text-[10px] text-txt-2 leading-snug">
-                      <span className="text-txt-1">{b.source}</span> — {b.technique}
+                      <span className="text-txt-1">{b.source}</span> · {b.technique}
                       {b.evidence ? <span className="text-txt-3"> · “{b.evidence}”</span> : null}
                     </li>
                   ))}

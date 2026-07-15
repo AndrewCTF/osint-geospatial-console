@@ -392,7 +392,7 @@ _BRIEF_SYS = (
     "structured COUNTRY BRIEF in Markdown with exactly these sections, each an "
     "H2 heading: ## Overview, ## Political leadership, ## Military posture, "
     "## Recent security events, ## Watch items. Ground EVERY statement ONLY in "
-    "the JSON data provided — do not add outside knowledge, do not speculate, "
+    "the JSON data provided. Do not add outside knowledge, do not speculate, "
     "do not invent names, numbers, or events. Cite figures exactly as given "
     "(with their units). If a section has no supporting data, say so plainly in "
     "one line rather than guessing. Keep it tight and factual."
@@ -451,7 +451,7 @@ async def country_brief(
 
         res = await llm.chat(
             [
-                {"role": "system", "content": _BRIEF_SYS},
+                {"role": "system", "content": llm.with_prose_style(_BRIEF_SYS)},
                 {"role": "user", "content": _json.dumps(payload, ensure_ascii=False)},
             ],
             tier="fast",

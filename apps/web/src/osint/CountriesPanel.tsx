@@ -172,7 +172,7 @@ export function CountriesPanel(): JSX.Element {
       <div style={{ fontWeight: 700, letterSpacing: 0.5 }}>Countries</div>
       <div style={{ fontSize: 11, color: 'var(--txt-3)' }}>
         {list
-          ? `${list.count} country toolkits — open-data, registries, court/legal, sanctions, and more.`
+          ? `${list.count} country toolkits: open-data, registries, court/legal, sanctions, and more.`
           : listError
             ? 'Failed to load catalog.'
             : 'Loading catalog…'}

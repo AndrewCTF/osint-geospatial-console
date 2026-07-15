@@ -253,7 +253,7 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
     <div className="p-4 ep-stack">
       {isSim && (
         <div className="ep-span">
-          <Caveat level="SIMULATED" note="notional war-game entity — not a real contact" tone="warn" />
+          <Caveat level="SIMULATED" note="notional war-game entity, not a real contact" tone="warn" />
         </div>
       )}
       <div className="ep-span">
@@ -605,7 +605,7 @@ function PreserveEvidenceButton({
       toast.ok('Preserved as evidence');
     } else {
       setPhase('error');
-      toast.error('Preserve failed');
+      toast.error('Could not preserve.');
     }
   };
 
@@ -696,7 +696,7 @@ function ActionButton({
       toast.ok(doneLabel);
     } catch {
       setPhase('error');
-      setMsg('network error');
+      setMsg('Network error. Check your connection.');
       toast.error(`${label}: network error`);
     }
   };

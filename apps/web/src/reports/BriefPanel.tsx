@@ -65,7 +65,7 @@ ${topAlerts.length ? `<h2>Recent alerts</h2><table><tr><th>Sev</th><th>Message</
       kpis: { contacts: stats.counted, feeds_live: feedLive, feeds_total: feedList.length, alerts: alerts.length },
       severity: Object.fromEntries(SEVERITIES.map((s) => [s, sevCount[s] ?? 0])),
       alerts: topAlerts.map((a) => `${a.severity.toUpperCase()}: ${a.message}`),
-      sources: feedList.map((f) => `${f.label} — ${f.status}`),
+      sources: feedList.map((f) => `${f.label}: ${f.status}`),
     };
     try {
       const r = await apiFetch('/api/report/pptx', {

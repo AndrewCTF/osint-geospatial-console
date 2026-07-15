@@ -107,7 +107,7 @@ export function LeadershipCard({ state }: { state: FetchState<ProfileResponse> }
       {!loading && error && <div className="mono text-[10px] text-alert-fg">Failed to load leadership: {error}</div>}
       {!loading && !error && data?.unavailable && (
         <div className="mono text-[10px] text-txt-4">
-          Wikidata unavailable{data.note ? ` — ${data.note}` : ''}; retries shortly.
+          Wikidata unavailable{data.note ? `: ${data.note}` : ''}; retries shortly.
         </div>
       )}
       {!loading && !error && data && !data.unavailable && leaders.length === 0 && (

@@ -65,7 +65,7 @@ export function CameraCard({
         });
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'detect failed');
+      setErr(e instanceof Error ? e.message : 'Could not run detection.');
     } finally {
       busyRef.current = false;
       setDetecting(false);

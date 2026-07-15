@@ -71,7 +71,7 @@ function TopBar(): JSX.Element | null {
       <button
         type="button"
         onClick={() => setSettingsOpen(true)}
-        title="Settings — dashboard, aircraft motion & API keys"
+        title="Settings: dashboard, aircraft motion & API keys"
         className="mono text-[10px] px-2 py-0.5 border border-line rounded-sm text-txt-2 hover:border-accent-line hover:text-accent"
       >
         ⚙ Settings
@@ -122,7 +122,7 @@ function PredictedMotionBadge(): JSX.Element | null {
   return (
     <div className={`absolute ${bottomClass} left-2 z-[var(--z-dock)] mono text-[10px] px-2 py-1 rounded-sm border border-accent-line bg-bg-1/90 text-accent pointer-events-none flex items-center gap-1.5`}>
       <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
-      Predicted motion — aircraft positions estimated between ADS-B fixes
+      Predicted motion: aircraft positions estimated between ADS-B fixes
     </div>
   );
 }

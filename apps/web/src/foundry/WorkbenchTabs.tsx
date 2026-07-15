@@ -474,7 +474,7 @@ export function MonitorsTab({ datasetId }: { datasetId: string }): JSX.Element {
         </table>
         {monitors.length === 0 && (
           <div className="p-4">
-            <EmptyState icon={Bell} title="No monitors" hint="Watch this dataset for new versions, row conditions, or failed checks/builds — fire an alert, an LLM summary, or both." />
+            <EmptyState icon={Bell} title="No monitors" hint="Watch this dataset for new versions, row conditions, or failed checks/builds, then fire an alert, an LLM summary, or both." />
           </div>
         )}
       </div>

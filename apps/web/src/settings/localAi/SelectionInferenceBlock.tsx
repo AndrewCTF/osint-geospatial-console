@@ -40,14 +40,14 @@ export function SelectionInferenceBlock({
         body: JSON.stringify({ selection_enabled: nextEnabled, selection_model: nextModel }),
       });
       if (!r.ok) {
-        setErr(`save failed (${r.status})`);
+        setErr(`Could not save the selection AI setting (HTTP ${r.status}).`);
         return;
       }
       setSetting('selectionAiEnabled', nextEnabled);
       setSetting('selectionAiModel', nextModel);
       onChanged();
     } catch {
-      setErr('network error');
+      setErr('Network error. Check your connection.');
     } finally {
       setBusy(false);
     }

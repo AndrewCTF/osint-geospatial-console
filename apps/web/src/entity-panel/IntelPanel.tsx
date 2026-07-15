@@ -282,7 +282,7 @@ export function IntelPanel({ viewer }: Props): JSX.Element {
           count={brief ? brief.incident_count : ''}
         />
         <p className="mono text-[10px] leading-snug text-txt-3">
-          Cross-domain convergences — jamming + dark vessels + military + events fused into cited incidents.
+          Cross-domain convergences: jamming + dark vessels + military + events fused into cited incidents.
         </p>
 
         {!brief || brief.incident_count === 0 ? (

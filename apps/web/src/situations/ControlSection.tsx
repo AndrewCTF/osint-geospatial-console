@@ -96,7 +96,7 @@ export function ControlSection({ viewer }: { viewer: Cesium.Viewer | null }): JS
   const doImport = (text: string): void => {
     const r = importGeoJSON(text);
     if (r.zones + r.lines === 0) {
-      toast.warn(`Import: nothing added — ${r.errors[0] ?? 'no polygons/lines found'}`);
+      toast.warn(`Nothing imported (${r.errors[0] ?? 'no polygons/lines found'})`);
     } else {
       toast.ok(`Imported ${r.zones} area(s), ${r.lines} line(s)${r.errors.length ? ` · ${r.errors.length} skipped` : ''}`);
     }
@@ -115,7 +115,7 @@ export function ControlSection({ viewer }: { viewer: Cesium.Viewer | null }): JS
     setBusy(false);
     if (r.ok) toast.ok('Saved');
     else if (r.status === 401 || r.status === 403) toast.warn('Sign in to persist (local-only)');
-    else toast.error(`Save failed (${r.status})`);
+    else toast.error(`Could not save the control layer (HTTP ${r.status}).`);
   };
 
   const flyToZone = (ring: [number, number][]): void => {
@@ -250,7 +250,7 @@ export function ControlSection({ viewer }: { viewer: Cesium.Viewer | null }): JS
             <button type="button" onClick={() => removeLine(l.id)} aria-label="Delete line" className="text-[11px] text-txt-3 hover:text-alert px-1 opacity-0 group-hover:opacity-100">✕</button>
           </div>
         ))}
-        {zones.length + lines.length === 0 && <MicroLabel>nothing drawn yet — draw or import</MicroLabel>}
+        {zones.length + lines.length === 0 && <MicroLabel>nothing drawn yet, draw or import</MicroLabel>}
       </div>
 
       <div className="grid grid-cols-2 gap-1.5 mt-2">

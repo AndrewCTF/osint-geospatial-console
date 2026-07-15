@@ -458,7 +458,7 @@ export function Timeline({ viewer }: Props = {}): JSX.Element {
             )}
             <span
               className="mono text-[10px] uppercase tracking-[0.5px] text-txt-4"
-              title={`Position history is a rolling, size-capped buffer (~${retentionDays(retentionHours)} retained, then oldest fixes drop). Replay older than this is unavailable — no cold storage.`}
+              title={`Position history is a rolling, size-capped buffer (~${retentionDays(retentionHours)} retained, then oldest fixes drop). Replay older than this is unavailable (no cold storage).`}
             >
               {ownershipChip}
             </span>

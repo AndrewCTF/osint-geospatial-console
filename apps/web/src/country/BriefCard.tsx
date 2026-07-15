@@ -46,7 +46,7 @@ export function BriefCard({ iso3 }: { iso3: string }): JSX.Element {
     setState({ busy: true, error: null, data: null });
     try {
       const r = await apiFetch(`/api/country/${iso3}/brief`, { signal: ctrl.signal });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`Country brief unavailable (HTTP ${r.status})`);
       const body = (await r.json()) as BriefResponse;
       if (body.ok) briefCache.set(iso3, body);
       if (!ctrl.signal.aborted) setState({ busy: false, error: null, data: body });
@@ -89,7 +89,7 @@ export function BriefCard({ iso3 }: { iso3: string }): JSX.Element {
       {state.data && state.data.ok === false && (
         <div className="mt-2 border border-warn-line bg-warn-bg rounded-sm p-2">
           <div className="text-[11px] text-warn-fg">
-            Brief unavailable — {state.data.reason || 'no LLM backend answered'}.
+            Brief unavailable: {state.data.reason || 'no LLM backend answered'}.
           </div>
           <div className="text-[10px] text-txt-3 mt-0.5">
             Configure a local model in Settings → Local AI, then retry.

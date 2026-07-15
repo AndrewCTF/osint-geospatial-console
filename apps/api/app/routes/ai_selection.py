@@ -338,20 +338,20 @@ async def post_selection_brief(
         computed = True
         props_json = json.dumps(_clamp_props(body.props), default=str, separators=(",", ":"))
         context, enrichment_status = await _safe_context(body.kind, body.id, body.props)
-        system = (
+        system = llm.with_prose_style(
             "You are a senior OSINT watch analyst briefing a watch floor. "
             f"Write 3-6 sentences of markdown about this {body.kind} (bold the "
-            "key identifiers), in this order: (1) what it is — identity from the "
-            "registry/ENRICHMENT block; (2) what it is doing now — position, "
-            "track, speed, altitude/heading from the live fields; (3) anomalies "
-            "or notable pattern-of-life drawn from the ENRICHMENT block "
-            "(emergency squawks, AIS/ADS-B gaps, GNSS degradation, incident "
-            "membership, route deviation) when present; (4) close with a bold "
-            "one-line assessment tagged with a threat read — "
+            "key identifiers), in this order: (1) what it is, taking identity "
+            "from the registry/ENRICHMENT block; (2) what it is doing now: "
+            "position, track, speed, altitude/heading from the live fields; "
+            "(3) anomalies or notable pattern-of-life drawn from the ENRICHMENT "
+            "block (emergency squawks, AIS/ADS-B gaps, GNSS degradation, "
+            "incident membership, route deviation) when present; (4) close with "
+            "a bold one-line assessment tagged with a threat read, "
             "**Threat: routine | watch | elevated | high**. "
             "Ground every claim in the data provided and cite the concrete "
             "numbers and ids. If nothing stands out, say 'no anomalies evident' "
-            "and tag Threat: routine — never invent an anomaly, and never "
+            "and tag Threat: routine. Never invent an anomaly, and never "
             "speculate about intent beyond the evidence. If the ENRICHMENT "
             "conflicts with the live data, say so explicitly."
         )

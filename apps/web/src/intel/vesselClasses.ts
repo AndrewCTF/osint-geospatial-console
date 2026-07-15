@@ -228,7 +228,7 @@ export function verifyAgainstAis(cls: VesselClass, aisLengthM?: number | null): 
   const pct = Math.round((Math.abs(cls.lengthM - aisLengthM) / aisLengthM) * 100);
   if (pct <= 8) return { level: 'confirmed', lenDeltaPct: pct, note: `AIS length ${Math.round(aisLengthM)} m agrees (±${pct}%)` };
   if (pct <= 18) return { level: 'plausible', lenDeltaPct: pct, note: `AIS length ${Math.round(aisLengthM)} m close (±${pct}%)` };
-  return { level: 'mismatch', lenDeltaPct: pct, note: `AIS length ${Math.round(aisLengthM)} m disagrees (±${pct}%) — possible spoof / mis-ID` };
+  return { level: 'mismatch', lenDeltaPct: pct, note: `AIS length ${Math.round(aisLengthM)} m disagrees (±${pct}%): possible spoof / mis-ID` };
 }
 
 // Weak SECONDARY matcher: length proximity only. Kept for the no-features case;

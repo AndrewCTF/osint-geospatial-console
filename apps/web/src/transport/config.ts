@@ -18,7 +18,7 @@ export async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
       const r = await apiFetch('/api/config');
       if (r.ok) return (await r.json()) as RuntimeConfig;
       status = r.status;
-      lastErr = new Error(`/api/config failed: ${r.status}`);
+      lastErr = new Error(`Configuration unavailable (HTTP ${r.status})`);
     } catch (e) {
       lastErr = e; // network refusal (backend not accepting yet) → retry
     }

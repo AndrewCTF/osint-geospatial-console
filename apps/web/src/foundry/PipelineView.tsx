@@ -257,7 +257,7 @@ function TransformEditor({ editing, onDone }: { editing: Transform | null; onDon
   const enterJsonMode = (): void => { setJsonText(JSON.stringify(steps, null, 2)); setJsonError(null); setJsonMode(true); };
   const leaveJsonMode = (): void => {
     try { setSteps(JSON.parse(jsonText) as TransformStep[]); setJsonMode(false); setJsonError(null); }
-    catch { setJsonError('Invalid JSON — fix it or switch back to the form editor.'); }
+    catch { setJsonError('Invalid JSON. Fix it or switch back to the form editor.'); }
   };
   const save = async (): Promise<void> => {
     setMutError(null);
@@ -307,7 +307,7 @@ function TransformEditor({ editing, onDone }: { editing: Transform | null; onDon
                 {d.name}
               </label>
             ))}
-            {datasets.length === 0 && <span className="text-[10px] text-txt-4">No datasets — upload one first.</span>}
+            {datasets.length === 0 && <span className="text-[10px] text-txt-4">No datasets. Upload one first.</span>}
           </div>
         </div>
 
@@ -329,7 +329,7 @@ function TransformEditor({ editing, onDone }: { editing: Transform | null; onDon
               {steps.map((s, i) => (
                 <StepRow key={i} step={s} onChange={(next) => setSteps((cur) => cur.map((c, j) => (j === i ? next : c)))} onRemove={() => setSteps((cur) => cur.filter((_, j) => j !== i))} />
               ))}
-              {steps.length === 0 && <p className="text-[10px] text-txt-4">No steps yet — the output mirrors the first input. Add a step above.</p>}
+              {steps.length === 0 && <p className="text-[10px] text-txt-4">No steps yet. The output mirrors the first input. Add a step above.</p>}
             </div>
           )}
         </div>
@@ -558,7 +558,7 @@ export function PipelineView(): JSX.Element {
             </svg>
             {laid.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center p-6">
-                <EmptyState icon={GitBranch} title="No pipeline yet" hint="Upload a dataset, then author a transform — its lineage graph draws here." />
+                <EmptyState icon={GitBranch} title="No pipeline yet" hint="Upload a dataset, then author a transform. Its lineage graph draws here." />
               </div>
             )}
           </div>

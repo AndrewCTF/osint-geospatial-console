@@ -16,7 +16,7 @@ export function ReconLauncher({ viewer }: { viewer: unknown }): JSX.Element {
     <div className="space-y-2">
       <CenterHeader center={center} onSync={sync} />
       <Widget title="3D Gaussian splatting">
-        <MicroLabel>Local reconstruction on the box GPU — no cloud upload.</MicroLabel>
+        <MicroLabel>Local reconstruction on the box GPU (no cloud upload).</MicroLabel>
         <KV className="mt-2">
           <KVRow k="Images / video" v="ingest in Studio" />
           <KVRow k="Satellite AOI" v="this view → 3D" />

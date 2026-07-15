@@ -71,7 +71,7 @@ export function economicImpact(target: { lat: number; lon: number }, damageUnits
       oilPriceShockPct: oil,
       tradeDisruptedUsdPerDay: Math.round(intensity * 2e9),
       intensity: round2(intensity),
-      summary: `No major chokepoint within range — impact is regional. Est. oil +${oil}%.`,
+      summary: `No major chokepoint within range. Impact is regional. Est. oil +${oil}%.`,
     };
   }
 

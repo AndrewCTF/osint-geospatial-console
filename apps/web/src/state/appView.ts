@@ -47,7 +47,7 @@ export const APP_META: Record<AppId, { label: string; hint: string; chrome: 'glo
   map: { label: 'Map', hint: 'Live geospatial COP (globe)', chrome: 'globe' },
   ai: {
     label: 'AI',
-    hint: 'Analyst agent, automated watch & alerts, local models — one place',
+    hint: 'Analyst agent, automated watch & alerts, local models, all in one place',
     chrome: 'full',
   },
   explorer: { label: 'Explorer', hint: 'Filter / aggregate the live object store', chrome: 'globe' },

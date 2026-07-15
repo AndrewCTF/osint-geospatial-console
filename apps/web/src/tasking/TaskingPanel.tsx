@@ -179,7 +179,7 @@ export function TaskingPanel({ viewer }: Props): JSX.Element {
     try {
       const r = await apiFetch('/api/space/gp?group=active&limit=20000');
       if (!r.ok) {
-        setErr(`CelesTrak upstream ${r.status}`);
+        setErr(`CelesTrak unavailable (HTTP ${r.status})`);
         setRunning(false);
         return;
       }
@@ -262,7 +262,7 @@ export function TaskingPanel({ viewer }: Props): JSX.Element {
         sky,
       });
     } catch {
-      setErr('failed to load satellite elements');
+      setErr('Could not load satellite elements.');
     } finally {
       setRunning(false);
     }
@@ -300,7 +300,7 @@ export function TaskingPanel({ viewer }: Props): JSX.Element {
     <div className="px-3 py-2">
       <SectionLabel title="Satellite tasking" count="planner" />
       <div className="mt-1.5">
-        <Caveat level="PREDICTED" note="SGP4 forecast — not live track" tone="warn" />
+        <Caveat level="PREDICTED" note="SGP4 forecast, not live track" tone="warn" />
       </div>
 
       {/* ── Question queue (§8 MetaConstellation) — standing "can a sensor answer
@@ -490,7 +490,7 @@ export function TaskingPanel({ viewer }: Props): JSX.Element {
             {revisitWarn && (
               <p className="mono text-[10px] text-[#fcd9a0] mt-2 leading-snug">
                 avg revisit {stats.avgRevisitMin.toFixed(0)} min exceeds target{' '}
-                {minRevisitN} min — add sensors or widen the window.
+                {minRevisitN} min. Add sensors or widen the window.
               </p>
             )}
             <p className="mono text-[10px] text-txt-3 mt-2 leading-snug">

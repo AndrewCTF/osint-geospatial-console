@@ -121,7 +121,7 @@ export function CountryApp(): JSX.Element {
 
   useEffect(() => {
     apiFetch('/api/country/list')
-      .then((r) => (r.ok ? (r.json() as Promise<CountryRow[]>) : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((r) => (r.ok ? (r.json() as Promise<CountryRow[]>) : Promise.reject(new Error(`Country list unavailable (HTTP ${r.status})`))))
       .then(setCountries)
       .catch((e: unknown) => setListError(e instanceof Error ? e.message : String(e)));
     // OSINT catalog is optional — a failure only degrades the resources card.

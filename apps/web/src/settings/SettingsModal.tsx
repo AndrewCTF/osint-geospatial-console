@@ -140,7 +140,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }): JSX.Element
             href={ACCOUNT_URL}
             className="block text-center mt-2 mono text-[10px] px-2 py-1.5 border border-line rounded-sm text-txt-2 hover:border-accent-line hover:text-accent"
           >
-            Open full dashboard — limits, billing & alerts →
+            Open full dashboard (limits, billing & alerts) →
           </a>
         </div>
       </div>
@@ -253,7 +253,7 @@ function GovernorToggle(): JSX.Element {
       </div>
       <div className="mono text-[10px] text-txt-3 mt-1 leading-snug">
         Stop re-rendering the globe every frame when nothing is moving (world view,
-        teleport aircraft). Cuts idle GPU burn; motion stays smooth. Off by default —
+        teleport aircraft). Cuts idle GPU burn; motion stays smooth. Off by default;
         confirm glide/pulse look right on your hardware before relying on it.
       </div>
     </button>
@@ -321,7 +321,7 @@ function LocalAiToggle(): JSX.Element {
       : !st.tool_capable
         ? 'no tool-capable model installed'
         : on
-          ? `local — ${st.model_reason}`
+          ? `local (${st.model_reason})`
           : 'using cloud';
 
   return (
@@ -349,7 +349,7 @@ function LocalAiToggle(): JSX.Element {
       </div>
       <div className="mono text-[10px] text-txt-3 mt-1 leading-snug">
         Route narrative, agent &amp; sim reasoning to a local Ollama model instead of the
-        cloud — no API rate limits. Needs a capable GPU + Ollama running.{' '}
+        cloud, with no API rate limits. Needs a capable GPU + Ollama running.{' '}
         <span className="text-accent">{reason}</span>.
       </div>
     </button>

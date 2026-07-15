@@ -85,7 +85,7 @@ export function MilitaryCard({
         )}
         {!wb.loading && wb.error && <div className="mono text-[10px] text-alert-fg">Failed: {wb.error}</div>}
         {!wb.loading && !wb.error && wb.data && milInds.length === 0 && (
-          <div className="mono text-[10px] text-txt-4">No military indicators in the World Bank payload.</div>
+          <div className="mono text-[10px] text-txt-4">No military indicators in the World Bank data.</div>
         )}
         {milInds.length > 0 && (
           <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(170px,1fr))]">

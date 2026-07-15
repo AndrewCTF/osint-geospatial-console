@@ -92,12 +92,12 @@ export function TrafficSimSection({
     if (!tc) return;
     try {
       const r = await apiFetch(`/api/cams/${encodeURIComponent(c.cam_id)}/snapshot`);
-      if (!r.ok) throw new Error(`snap ${r.status}`);
+      if (!r.ok) throw new Error(`Camera snapshot unavailable (HTTP ${r.status})`);
       const bytes = new Uint8Array(await r.arrayBuffer());
       const dets = await detectImage(bytes);
       const res = await tc.seed(c, dets ?? []);
       setSimCount(res.count);
-      setMsg(res.road ? null : 'no road geometry — using fallback line');
+      setMsg(res.road ? null : 'no road geometry, using fallback line');
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'sim failed');
     }
@@ -125,7 +125,7 @@ export function TrafficSimSection({
     const res = await tc.seedFromCaptures(caps);
     setSimCount(res.count);
     setJamInfo({ roads: res.roads, jams: res.jams });
-    setMsg(res.count === 0 ? 'no cam captures with vehicles yet — detect on some cams first' : null);
+    setMsg(res.count === 0 ? 'no cam captures with vehicles yet; detect on some cams first' : null);
   };
 
   const onSimulateReal = async (): Promise<void> => {

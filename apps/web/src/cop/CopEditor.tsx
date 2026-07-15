@@ -117,11 +117,11 @@ export function CopEditor({ registry }: { registry: LayerRegistry }): JSX.Elemen
           });
           setStatus(
             res.blockedFallback
-              ? `${mode} route added — some legs had no path (straight fallback)`
+              ? `${mode} route added (some legs had no path, straight fallback)`
               : `${mode} route added (${res.coords.length} pts, grid ${res.cells})`,
           );
         })
-        .catch(() => setStatus('route failed'));
+        .catch(() => setStatus('Could not compute the route.'));
     });
   };
 
@@ -145,7 +145,7 @@ export function CopEditor({ registry }: { registry: LayerRegistry }): JSX.Elemen
     } else if (r.status === 401 || r.status === 403) {
       toast.warn('Sign in to persist (local-only for now)');
     } else {
-      toast.error(`Save failed (${r.status})`);
+      toast.error(`Could not save the COP (HTTP ${r.status}).`);
     }
   };
 
@@ -267,7 +267,7 @@ export function CopEditor({ registry }: { registry: LayerRegistry }): JSX.Elemen
           {rings.map((r) => (
             <Row key={r.id} dot="#f59e0b" label={`${r.label} · ${r.radiusKm}km`} onDel={() => removeRing(r.id)} />
           ))}
-          {units.length + lines.length + rings.length === 0 && <MicroLabel>empty COP — place a unit</MicroLabel>}
+          {units.length + lines.length + rings.length === 0 && <MicroLabel>empty COP, place a unit</MicroLabel>}
         </div>
         <div className="grid grid-cols-3 gap-1.5 mt-2">
           <Btn tone="accent" onClick={() => void save()} disabled={busy}>Save</Btn>

@@ -509,7 +509,7 @@ export function FmvPanel({ viewer }: { viewer: unknown }): JSX.Element | null {
 
   return (
     <div className="space-y-2" ref={rootRef}>
-      <Widget title="FMV — sensor view">
+      <Widget title="FMV · sensor view">
         <div className="mb-2">
           <Caveat level="NOTIONAL // SIMULATED" tone="warn" />
         </div>

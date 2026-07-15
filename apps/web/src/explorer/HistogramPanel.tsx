@@ -105,7 +105,7 @@ export function HistogramPanel({ viewer }: Props = {}): JSX.Element {
           ))
         )}
         <p className="mono text-[10px] text-txt-4 leading-relaxed pt-1">
-          Filters dim non-matching contacts on the map — icons stay drawn, never removed. Flag is
+          Filters dim non-matching contacts on the map. Icons stay drawn, never removed. Flag is
           derived client-side from ICAO24 / MMSI blocks (coarse).
         </p>
       </div>

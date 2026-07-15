@@ -88,7 +88,7 @@ function download(obj: EvidenceObject): void {
       // download stream has read it. Give it time, then reclaim the memory.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch {
-      toast.error('download failed (network)');
+      toast.error('Could not download the file. Check your connection.');
     }
   })();
 }
@@ -106,15 +106,15 @@ function EvidenceRow({ obj }: { obj: EvidenceObject }): JSX.Element {
   const onVerify = async (): Promise<void> => {
     const ok = await verify(p.sha256);
     setVerified(ok);
-    if (ok) toast.ok('hash verified — bytes unaltered');
-    else toast.error('hash MISMATCH — blob altered or missing');
+    if (ok) toast.ok('hash verified: bytes unaltered');
+    else toast.error('hash MISMATCH: blob altered or missing');
   };
 
   const onAttach = async (): Promise<void> => {
     if (!sit) return;
     const ok = await attach(p.sha256, sit);
     if (ok) toast.ok('attached to case');
-    else toast.error('attach failed');
+    else toast.error('Could not attach to the case.');
   };
 
   return (
@@ -196,7 +196,7 @@ export function EvidencePanel(): JSX.Element {
       setUrl('');
       toast.ok('URL captured & hashed');
     } else {
-      toast.error('capture failed');
+      toast.error('Could not capture the URL.');
     }
   };
 
@@ -205,7 +205,7 @@ export function EvidencePanel(): JSX.Element {
     if (!f) return;
     const obj = await upload(f);
     if (obj) toast.ok('file captured & hashed');
-    else toast.error('upload failed');
+    else toast.error('Could not upload the file.');
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -216,7 +216,7 @@ export function EvidencePanel(): JSX.Element {
       <Widget title="Preserve evidence">
         <p className="text-[11px] text-txt-3 mb-2">
           Every capture is content-addressed by SHA-256 at ingest and logged with an
-          append-only chain of custody. The hash is the identity — a tampered copy
+          append-only chain of custody. The hash is the identity; a tampered copy
           can never masquerade as the original.
         </p>
         <div className="space-y-1.5">

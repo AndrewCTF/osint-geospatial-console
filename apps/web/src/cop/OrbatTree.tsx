@@ -70,7 +70,7 @@ export function OrbatTree(): JSX.Element {
   return (
     <Widget title="Order of Battle">
       <div className="space-y-2">
-        <Caveat level="NOTIONAL" note="illustrative — no live order-of-battle feed" tone="warn" />
+        <Caveat level="NOTIONAL" note="illustrative: no live order-of-battle feed" tone="warn" />
         {forest.length === 0 ? (
           <p className="text-[10.5px] text-txt-3">No units placed.</p>
         ) : (

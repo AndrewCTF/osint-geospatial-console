@@ -37,7 +37,7 @@ const KIND_LABELS: Record<ScenarioKind, string> = {
 };
 
 function fmtPt(p: LatLon | null): string {
-  return p ? `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` : '— click map —';
+  return p ? `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}` : '(click map)';
 }
 
 // Parse the coordinate-entry inputs into a validated {lat, lon}. Accepts a
@@ -452,7 +452,7 @@ export function SimulationOverlay({
               <Slider label="Strikers" value={attackerCount} min={1} max={2000} step={1} onChange={setAttackerCount} />
               {attackerCount > RENDER_AGENT_CAP && (
                 <MicroLabel className="block text-warn">
-                  rendering {RENDER_AGENT_CAP} of {attackerCount} — math uses full count
+                  rendering {RENDER_AGENT_CAP} of {attackerCount} (math uses full count)
                 </MicroLabel>
               )}
               <Select label="Air defence" value={defenderId} options={defenderSystems} onChange={setDefenderId} />
@@ -463,7 +463,7 @@ export function SimulationOverlay({
               {isSwarm && <Slider label="Drones" value={count} min={1} max={2000} step={1} onChange={setCount} />}
               {isSwarm && count > RENDER_AGENT_CAP && (
                 <MicroLabel className="block text-warn">
-                  rendering {RENDER_AGENT_CAP} of {count} — math uses full count
+                  rendering {RENDER_AGENT_CAP} of {count} (math uses full count)
                 </MicroLabel>
               )}
               <Slider label="Speed" value={speedKph} min={40} max={900} step={5} unit=" km/h" onChange={setSpeedKph} />

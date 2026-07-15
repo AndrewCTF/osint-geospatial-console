@@ -122,7 +122,7 @@ export function StudioPage(): JSX.Element {
       fd.append('down', String(down));
       fd.append('matcher', matcher);
       const res = await apiFetch('/api/recon/jobs', { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(`start failed: ${res.status} ${await res.text()}`);
+      if (!res.ok) throw new Error(`Could not start reconstruction (HTTP ${res.status}).`);
       return ((await res.json()) as { job_id: string }).job_id;
     });
   }, [files, steps, sh, down, matcher, runJob]);
@@ -135,7 +135,7 @@ export function StudioPage(): JSX.Element {
         date: satDate, source: satSource,
       });
       const res = await apiFetch(`/api/imagery/splat?${qs}`, { method: 'POST' });
-      if (!res.ok) throw new Error(`AOI splat failed: ${res.status} ${await res.text()}`);
+      if (!res.ok) throw new Error(`Could not start the satellite splat (HTTP ${res.status}).`);
       return ((await res.json()) as { job_id: string }).job_id;
     });
   }, [lat, lon, radiusKm, satDate, satSource, runJob]);
@@ -319,7 +319,7 @@ function NumberInput({
 // EventSource cannot set auth headers). Frames are `data: {json}\n\n`.
 async function streamEvents(jobId: string, onEvent: (p: Progress) => void): Promise<void> {
   const res = await apiFetch(`/api/recon/jobs/${jobId}/events`);
-  if (!res.ok || !res.body) throw new Error(`events failed: ${res.status}`);
+  if (!res.ok || !res.body) throw new Error(`Could not stream reconstruction progress (HTTP ${res.status}).`);
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';

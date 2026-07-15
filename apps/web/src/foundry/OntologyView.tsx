@@ -94,13 +94,13 @@ function BindingEditor({ open, onClose }: { open: boolean; onClose: () => void }
           </Field>
         </div>
         <div>
-          <div className="text-[10px] uppercase tracking-[0.4px] text-txt-3 mb-1.5">Property map — column → ontology property</div>
+          <div className="text-[10px] uppercase tracking-[0.4px] text-txt-3 mb-1.5">Property map: column → ontology property</div>
           <PropMapEditor map={propMap} onChange={setPropMap} columns={schemaCols} />
         </div>
         <label className="flex items-center gap-2 cursor-pointer">
           <Toggle on={resolve} onChange={setResolve} label="entity resolution" />
           <span className="text-[11px] text-txt-1">Entity resolution</span>
-          <span className="text-[10px] text-txt-4">— match an existing object by key instead of minting a duplicate</span>
+          <span className="text-[10px] text-txt-4">(match an existing object by key instead of minting a duplicate)</span>
         </label>
       </div>
     </Modal>

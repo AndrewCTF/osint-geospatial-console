@@ -139,7 +139,7 @@ export function WatchboxPanel(): JSX.Element {
               </div>
             ),
           )}
-          {wbs.length === 0 && <MicroLabel>no watchboxes — draw an AOI</MicroLabel>}
+          {wbs.length === 0 && <MicroLabel>no watchboxes: draw an AOI</MicroLabel>}
         </div>
         {wbs.length > 0 && (
           <div className="mt-2">

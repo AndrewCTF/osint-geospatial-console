@@ -226,7 +226,7 @@ export function ExplorerApp({ viewer }: { viewer: Cesium.Viewer | null }): JSX.E
               saveSearch(label, { type, q, ...(win && win.s != null ? { sinceS: win.s } : {}) });
               toast.ok('Search saved');
             }}
-            title="Save this filter as an Inbox subscription — you're notified when new objects match"
+            title="Save this filter as an Inbox subscription. You're notified when new objects match."
             className="mono text-[10px] uppercase tracking-[0.4px] px-2 py-0.5 rounded-sm border border-line text-txt-2 hover:text-txt-0 hover:border-accent-line"
           >
             Save search

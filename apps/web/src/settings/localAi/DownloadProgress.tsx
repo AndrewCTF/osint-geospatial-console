@@ -51,7 +51,9 @@ export function DownloadProgress({
     return <p className="mono text-[10px] text-txt-3">queued…</p>;
   }
   if (job.status === 'error') {
-    return <p className="mono text-[10px] text-alert">download failed{job.error ? `: ${job.error}` : ''}</p>;
+    return (
+      <p className="mono text-[10px] text-alert">Download failed{job.error ? `: ${job.error}` : '.'}</p>
+    );
   }
   if (job.status === 'done') {
     return <p className="mono text-[10px] text-ok">✓ installed</p>;

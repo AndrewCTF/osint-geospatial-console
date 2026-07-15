@@ -171,7 +171,7 @@ export function WatchOfficerPanel({ viewer }: { viewer: Cesium.Viewer | null }):
         <>
           <p className="text-[11px] text-txt-3">
             Fuses live ADS-B/AIS/SAR/jamming/event signals every cycle and files a finished brief
-            when a convergence escalates — behavioural detection (AIS/ADS-B gaps, loiter, proximity),
+            when a convergence escalates: behavioural detection (AIS/ADS-B gaps, loiter, proximity),
             no query needed. It also acts: tasks SAR on dark vessels and mints a tracked incident.
           </p>
 
@@ -236,7 +236,7 @@ export function WatchOfficerPanel({ viewer }: { viewer: Cesium.Viewer | null }):
 
           {briefs.length === 0 ? (
             <p className="mono text-[11px] text-txt-3 py-2">
-              No open briefs — the officer is on watch and the picture is quiet.
+              No open briefs. The officer is on watch and the picture is quiet.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -348,7 +348,7 @@ export function WatchOfficerPanel({ viewer }: { viewer: Cesium.Viewer | null }):
                             {b.evidence.map((e, i) => (
                               <div key={i} className="mono text-[10px] text-txt-2">
                                 <span className="text-txt-3">{e.domain}</span>
-                                <span className="text-txt-4"> · {e.severity}</span> — {e.summary}
+                                <span className="text-txt-4"> · {e.severity}</span>: {e.summary}
                                 {e.kind && (
                                   <span className="text-txt-4">
                                     {' '}

@@ -17,7 +17,7 @@ export function ModelsTable({
   onChanged: () => void;
 }): JSX.Element {
   if (installed.length === 0) {
-    return <p className="mono text-[10px] text-txt-3">No models installed yet — pick one from the catalog below.</p>;
+    return <p className="mono text-[10px] text-txt-3">No models installed yet. Pick one from the catalog below.</p>;
   }
   return (
     <div className="space-y-1.5">
@@ -51,12 +51,12 @@ function ModelRow({
         body: JSON.stringify({ key: model.key, hot: !model.hot }),
       });
       if (!r.ok) {
-        setErr(`hot-pin failed (${r.status})`);
+        setErr(`Could not pin the model (HTTP ${r.status}).`);
         return;
       }
       onChanged();
     } catch {
-      setErr('network error');
+      setErr('Network error. Check your connection.');
     } finally {
       setBusy(false);
     }
@@ -68,13 +68,13 @@ function ModelRow({
     try {
       const r = await apiFetch(`/api/ai/models/${encodeURIComponent(model.key)}`, { method: 'DELETE' });
       if (!r.ok) {
-        setErr(`delete failed (${r.status})`);
+        setErr(`Could not delete the model (HTTP ${r.status}).`);
         setConfirming(false);
         return;
       }
       onChanged();
     } catch {
-      setErr('network error');
+      setErr('Network error. Check your connection.');
       setConfirming(false);
     } finally {
       setBusy(false);

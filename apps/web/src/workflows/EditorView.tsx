@@ -191,7 +191,7 @@ function PythonContractNote(): JSX.Element {
         Return <span className="mono">list[dict]</span> or{' '}
         <span className="mono">{'{"rows": [...], "memory": {...}}'}</span>. Runs in a
         resource-limited subprocess on your own machine (CPU / memory / open-file caps,
-        timeout up to 60s) — BYO-compute, not a hostile-tenant sandbox.
+        timeout up to 60s). This is BYO-compute, not a hostile-tenant sandbox.
       </div>
     </div>
   );
@@ -212,8 +212,8 @@ function LlmContractNote(): JSX.Element {
   return (
     <div className="rounded-sm border border-line-2 bg-bg-0 px-2.5 py-2 text-[10.5px] text-txt-2 leading-relaxed">
       <div className="text-txt-3 uppercase tracking-[0.4px] text-[9.5px] mb-1">Template variables</div>
-      <span className="mono">{'{rows}'}</span> — input rows as JSON (capped 100 rows / 20KB).{' '}
-      <span className="mono">{'{memory}'}</span> — this workflow&apos;s persisted memory. per_batch
+      <span className="mono">{'{rows}'}</span>: input rows as JSON (capped 100 rows / 20KB).{' '}
+      <span className="mono">{'{memory}'}</span>: this workflow&apos;s persisted memory. per_batch
       returns one summary row; per_row processes up to 50 rows and adds an{' '}
       <span className="mono">llm</span> column per row.
     </div>
@@ -224,7 +224,7 @@ function ControlContractNote(): JSX.Element {
   return (
     <InlineAlert tone="warn" className="leading-relaxed">
       <div className="uppercase tracking-[0.4px] text-[9.5px] mb-1">Acts on external systems</div>
-      Sends a JSON command to <em>your</em> control server. <strong>Preview never fires</strong> —
+      Sends a JSON command to <em>your</em> control server. <strong>Preview never fires</strong>:
       write commands (and drone/device dispatch) run dry and show the would-be envelope; only a real
       run actuates. Capped at 200 dispatches/run. Set{' '}
       <span className="mono">WORKFLOWS_CONTROL_ENABLED=0</span> to force dry-run everywhere. Wire
@@ -333,7 +333,7 @@ function ConfigPanel({
     return <p className="text-[11px] text-txt-3">Select a block to configure it.</p>;
   }
   if (!spec) {
-    return <p className="text-[11px] text-alert">Unknown block type &quot;{block.type}&quot; — not in the catalog.</p>;
+    return <p className="text-[11px] text-alert">Unknown block type &quot;{block.type}&quot; is not in the catalog.</p>;
   }
   const set = (key: string, value: unknown): void => onChange({ ...block.config, [key]: value });
 
@@ -524,14 +524,14 @@ function MemoryModal({ workflowId, onClose }: { workflowId: string; onClose: () 
     }
     const res = await putMemory(workflowId, parsed);
     if (res) setText(JSON.stringify(res, null, 2));
-    else setError('save failed');
+    else setError('Could not save the memory.');
   };
 
   return (
     <Modal open onClose={onClose} title="Memory" width={520} footer={<Btn tone="accent" onClick={() => void onSave()}>Save</Btn>}>
       <div className="space-y-2">
         <p className="text-[10.5px] text-txt-3">
-          Persistent per-workflow key/value state (dedup, baselines) — read/written by blocks via{' '}
+          Persistent per-workflow key/value state (dedup, baselines), read/written by blocks via{' '}
           <span className="mono">memory</span>. Saving replaces the whole memory wholesale.
         </p>
         {error && <p className="text-[11px] text-alert">{error}</p>}
@@ -1017,7 +1017,7 @@ export function EditorView(): JSX.Element {
                   <EmptyState
                     icon={Workflow}
                     title="No blocks yet"
-                    hint="Add a source, wire it into ops and sinks — the graph draws here."
+                    hint="Add a source, wire it into ops and sinks. The graph draws here."
                     action={<Btn tone="accent" size="sm" onClick={() => setPaletteOpen(true)}>+ Add block</Btn>}
                   />
                 </div>
@@ -1027,7 +1027,7 @@ export function EditorView(): JSX.Element {
 
           <div className="h-[180px] shrink-0 rounded-md border border-line-2 bg-bg-1 overflow-hidden flex flex-col">
             <div className="px-2.5 py-1.5 border-b border-line-2 text-[10px] uppercase tracking-[0.4px] text-txt-3 flex items-center justify-between">
-              <span>Sample rows{selectedBlockId ? ` — ${selectedBlockId}` : ''}</span>
+              <span>Sample rows{selectedBlockId ? ` · ${selectedBlockId}` : ''}</span>
               {selectedPreview && (
                 <span className="mono text-txt-4">
                   {selectedPreview.rows_in}→{selectedPreview.rows_out}

@@ -62,7 +62,11 @@ export function AnnotationPanel(): JSX.Element {
     const r = await saveAnnotations();
     setBusy(false);
     setStatus(
-      r.ok ? 'saved ✓' : r.status === 401 || r.status === 403 ? 'sign in to persist (local-only)' : `save failed (${r.status})`,
+      r.ok
+        ? 'saved ✓'
+        : r.status === 401 || r.status === 403
+          ? 'Sign in to persist (local-only).'
+          : `Could not save (HTTP ${r.status}).`,
     );
   };
 

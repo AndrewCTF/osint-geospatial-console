@@ -153,7 +153,7 @@ const EXTRA_SYSTEMS: CatalogItem[] = [
     role: 'Short-range RF-piloted attack drone',
     specs: { range_km: 10, speed_kph: 120, ceiling_m: 2000, payload_kg: 1.5, pk_est: 0.5, cost_usd: 500 },
     sources: ['open-source / Ukraine-war reporting'],
-    notes: 'RF command link — jammable, line-of-sight limited. Falls when jammed.',
+    notes: 'RF command link: jammable, line-of-sight limited. Falls when jammed.',
   },
   {
     id: 'fpv-fiber',
@@ -163,7 +163,7 @@ const EXTRA_SYSTEMS: CatalogItem[] = [
     role: 'Fiber-tethered attack drone, jam-proof',
     specs: { range_km: 20, speed_kph: 120, ceiling_m: 2000, payload_kg: 1.5, pk_est: 0.6, cost_usd: 1500 },
     sources: ['open-source / Ukraine-war reporting'],
-    notes: 'Fiber-optic spool ~10–20 km — UNJAMMABLE, no RF emission, but tethered range cap.',
+    notes: 'Fiber-optic spool ~10–20 km: UNJAMMABLE, no RF emission, but tethered range cap.',
   },
 ];
 

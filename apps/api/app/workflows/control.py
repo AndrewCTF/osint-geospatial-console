@@ -107,6 +107,61 @@ def _allow_hosts() -> set[str] | None:
     return {h.strip().lower() for h in raw.split(",") if h.strip()}
 
 
+def _block_private() -> bool:
+    """Opt-in strict SSRF mode. Default OFF (the BYO posture: a control server
+    on localhost / the LAN is the normal case — a drone on 192.168.x, a local
+    receiver on 127.0.0.1). Set ``WORKFLOWS_HTTP_BLOCK_PRIVATE=1`` on a box that
+    is exposed beyond the operator's own network to also refuse private /
+    loopback / reserved / multicast targets (defence in depth on top of the auth
+    gate that already fronts /api/workflows). An explicit
+    ``WORKFLOWS_HTTP_ALLOW_HOSTS`` entry still wins, so a named internal host can
+    be reached even in strict mode."""
+    return os.getenv("WORKFLOWS_HTTP_BLOCK_PRIVATE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _ip_is_private(ip: str) -> bool:
+    """True for any non-public address. IPv4-in-IPv6 encodings are unwrapped
+    before classifying (older CPython does not delegate a mapped literal to the
+    is_* flags) — same hardening as ``intel/evidence.py``'s SSRF guard."""
+    try:
+        addr: Any = ipaddress.ip_address(ip)
+    except ValueError:
+        return True  # unparseable → treat as unsafe
+    if isinstance(addr, ipaddress.IPv6Address):
+        embedded = addr.ipv4_mapped or addr.sixtofour
+        if embedded is None and addr.teredo is not None:
+            embedded = addr.teredo[1]
+        if embedded is not None:
+            addr = embedded
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    )
+
+
+def _resolves_private(host: str) -> bool:
+    """True if *host* is, or resolves to, any private/non-public address."""
+    candidates: list[str] = []
+    try:
+        ipaddress.ip_address(host)
+        candidates.append(host)
+    except ValueError:
+        try:
+            candidates = [ai[4][0] for ai in socket.getaddrinfo(host, None)]
+        except OSError:
+            return True  # unresolvable in strict mode → refuse, don't leak a probe
+    return any(_ip_is_private(addr) for addr in candidates)
+
+
 def _is_link_local(host: str) -> bool:
     """True if *host* is, or resolves to, an IPv4 link-local address
     (169.254.0.0/16 — the cloud-metadata range, incl. 169.254.169.254). Kept
@@ -160,6 +215,20 @@ def check_url(url: str) -> None:
             403,
             f"host {parts.hostname!r} resolves to the link-local/metadata range "
             "(169.254.0.0/16), which is blocked",
+        )
+    # Opt-in strict mode: also refuse private / loopback / reserved targets on a
+    # publicly-exposed box. An explicit allowlist entry still wins so a named
+    # internal control server can be reached deliberately.
+    if (
+        _block_private()
+        and (allow is None or host_lower not in allow)
+        and _resolves_private(parts.hostname)
+    ):
+        raise WorkflowError(
+            403,
+            f"host {parts.hostname!r} is private/loopback/reserved and "
+            "WORKFLOWS_HTTP_BLOCK_PRIVATE is set; add it to "
+            "WORKFLOWS_HTTP_ALLOW_HOSTS to reach it deliberately",
         )
 
 

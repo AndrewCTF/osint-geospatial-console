@@ -78,7 +78,7 @@ export function CollabPanel({ docId = 'shared-notes' }: { docId?: string }) {
         value={text}
         onChange={(e) => onChange(e.target.value)}
         rows={10}
-        placeholder="Shared notes — edits sync live across analysts…"
+        placeholder="Shared notes. Edits sync live across analysts."
         style={{
           background: 'rgba(255,255,255,0.05)',
           border: '1px solid rgba(255,255,255,0.15)',

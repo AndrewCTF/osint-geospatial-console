@@ -94,7 +94,7 @@ export function CoverageStrip({ windowHours, onCoverage }: Props): JSX.Element {
       className="relative h-[8px] w-full bg-bg-3 border border-line rounded-sm overflow-hidden"
       role="img"
       aria-label="History coverage: recorded-fix density per hour"
-      title="Recorded-fix coverage — taller/brighter bars mean more history is retained for that hour"
+      title="Recorded-fix coverage: taller/brighter bars mean more history is retained for that hour"
     >
       <svg width="100%" height="100%" preserveAspectRatio="none" viewBox={`0 0 ${Math.max(buckets.length, 1)} 100`}>
         {buckets.map((b, i) => {

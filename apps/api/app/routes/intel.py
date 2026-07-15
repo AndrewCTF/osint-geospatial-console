@@ -594,7 +594,7 @@ async def intel_aircraft_dossier(ident: str) -> dict[str, Any]:
 # labelled an ASSESSMENT (never asserted fact). Degrades to ok:false when no model
 # is wired — it never invents a story.
 
-_NARRATIVE_SYSTEM = (
+_NARRATIVE_SYSTEM = llm.with_prose_style(
     "You are an intelligence analyst writing a SHORT pattern-of-life assessment. "
     "You are given a deterministic dossier (observed track stats, AIS/ADS-B gaps, "
     "speed profile, coverage, recent incident ids, identity attributes, source "
@@ -611,7 +611,7 @@ _NARRATIVE_SYSTEM = (
     '  "caveats": [str]\n'
     "}\n"
     "If the dossier is too thin to assess (almost no track), say so in one sentence "
-    "and return an empty observations list — do NOT fill the gap with a story."
+    "and return an empty observations list. Do NOT fill the gap with a story."
 )
 
 # (entity_id) → (expires_epoch, payload). The dossier moves slowly; a ~10 min TTL

@@ -142,7 +142,7 @@ function DossierTab({ id }: { id: string }): JSX.Element {
 h1{font-size:16px;border-bottom:2px solid #111;padding-bottom:6px}table{width:100%;border-collapse:collapse;font-size:12px}
 td{border-bottom:1px solid #ddd;padding:4px 6px}.cls{background:#0c3b1f;color:#86e0a6;text-align:center;font-weight:700;letter-spacing:.1em;padding:4px;text-transform:uppercase;font-size:11px}</style></head>
 <body><div class="cls">Unclassified // Open-source intelligence</div>
-<h1>Object dossier — ${esc(String(doss['callsign'] ?? doss['identity'] ?? ident ?? id))}</h1>
+<h1>Object dossier: ${esc(String(doss['callsign'] ?? doss['identity'] ?? ident ?? id))}</h1>
 <p>${esc(kind ?? '')} · generated ${now} · ${inc} live incident link(s)</p>
 ${doss['assessment'] ? `<p><b>Assessment:</b> ${esc(String(doss['assessment']))}</p>` : ''}
 <table>${kv}</table></body></html>`;
@@ -253,7 +253,7 @@ function HistoryTab({ id }: { id: string }): JSX.Element {
         Observed track · {pts.length} fix{pts.length === 1 ? '' : 'es'}
       </div>
       {recent.length === 0 ? (
-        <p className="mono text-[11px] text-txt-3">No track buffered yet — fixes accumulate while selected.</p>
+        <p className="mono text-[11px] text-txt-3">No track buffered yet. Fixes accumulate while selected.</p>
       ) : (
         <table className="w-full">
           <thead>

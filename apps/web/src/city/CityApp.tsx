@@ -61,7 +61,7 @@ export function CityApp(): JSX.Element {
     setJobsError(null);
     try {
       const res = await apiFetch('/api/recon/jobs');
-      if (!res.ok) throw new Error(`jobs list failed: ${res.status}`);
+      if (!res.ok) throw new Error(`Recon jobs unavailable (HTTP ${res.status})`);
       const body = (await res.json()) as { jobs?: ReconJob[] };
       setJobs(body.jobs ?? []);
     } catch (e) {
@@ -170,11 +170,11 @@ export function CityApp(): JSX.Element {
     const tick = async (): Promise<void> => {
       try {
         const r = await apiFetch(`/api/recon/jobs/${citySplatJob}`);
-        if (!r.ok) throw new Error(`job ${r.status}`);
+        if (!r.ok) throw new Error(`Splat job status unavailable (HTTP ${r.status})`);
         const job = (await r.json()) as ReconJob;
         if (stop) return;
         if (job.status === 'done') {
-          setCitySplatMsg(`Done — ${job.n_gaussians.toLocaleString()} Gaussians`);
+          setCitySplatMsg(`Done: ${job.n_gaussians.toLocaleString()} Gaussians`);
           setCitySplatJob(null);
           void fetchJobs();
           void openJob(job);
@@ -219,7 +219,7 @@ export function CityApp(): JSX.Element {
             {jobsError && <div className="mono text-[10px] text-alert">{jobsError}</div>}
             {!jobsError && !jobsLoading && doneJobs.length === 0 && (
               <div className="mono text-[10px] text-txt-3">
-                No finished recon jobs yet — build one in Reconstruction Studio.
+                No finished recon jobs yet. Build one in Reconstruction Studio.
               </div>
             )}
             <div className="flex flex-col gap-1">
@@ -320,7 +320,7 @@ export function CityApp(): JSX.Element {
               className="mt-2 w-full"
               onClick={() => void splatThisCity()}
               disabled={!!citySplatJob}
-              title="Keyless: stitch a satellite chip for this AOI and generate a real Gaussian splat — anywhere on Earth, no API key"
+              title="Keyless: stitch a satellite chip for this AOI and generate a real Gaussian splat (anywhere on Earth, no API key)"
             >
               {citySplatJob ? 'GENERATING…' : 'SPLAT THIS CITY (keyless satellite)'}
             </Btn>
@@ -373,7 +373,7 @@ export function CityApp(): JSX.Element {
               <p className="text-[11px] text-txt-3 leading-relaxed">
                 No scene loaded. Pick a finished recon job, open a local .ply / .splat / .spz
                 / .ksplat file, paste a splat URL, or build one from a satellite AOI in
-                Reconstruction Studio — every source here is keyless.
+                Reconstruction Studio. Every source here is keyless.
               </p>
             </div>
           </div>

@@ -58,12 +58,12 @@ export function CoordEntry({ viewer, onPlace, placeholder, fly = true }: Props) 
       const results = await search(text);
       const hit = results[0];
       if (!hit) {
-        setErr('no match');
+        setErr('No match found.');
         return;
       }
       place(hit.lat, hit.lon, LOCATION_KINDS.has(hit.kind) ? hit.label : undefined);
     } catch {
-      setErr('search failed');
+      setErr('Search failed.');
     } finally {
       setBusy(false);
     }
@@ -72,7 +72,7 @@ export function CoordEntry({ viewer, onPlace, placeholder, fly = true }: Props) 
   const useCentre = (): void => {
     const c = viewerCenter(viewer);
     if (c) place(c.lat, c.lon, 'map centre');
-    else setErr('no map centre');
+    else setErr('No map centre available.');
   };
 
   return (

@@ -82,7 +82,7 @@ export function presetKnobs(q: MapQuality | undefined | null): QualityKnobs {
 export const MAP_QUALITIES: MapQuality[] = ['high', 'balanced', 'performance'];
 
 export const QUALITY_LABELS: Record<MapQuality, { label: string; hint: string }> = {
-  high: { label: 'High', hint: 'Sharpest — native pixels, full detail' },
-  balanced: { label: 'Balanced', hint: 'Smoother — trims resolution & tiles' },
-  performance: { label: 'Performance', hint: 'Fastest — for low-end GPUs' },
+  high: { label: 'High', hint: 'Sharpest: native pixels, full detail' },
+  balanced: { label: 'Balanced', hint: 'Smoother: trims resolution & tiles' },
+  performance: { label: 'Performance', hint: 'Fastest, for low-end GPUs' },
 };

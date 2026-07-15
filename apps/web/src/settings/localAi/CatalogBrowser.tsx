@@ -44,7 +44,10 @@ export function CatalogBrowser({
       const body = (await r.json()) as { job_id: string };
       setJobs((j) => ({ ...j, [rowKey]: { repoId, quant, jobId: body.job_id } }));
     } catch {
-      setJobs((j) => ({ ...j, [rowKey]: { repoId, quant, jobId: 'error:network error' } }));
+      setJobs((j) => ({
+        ...j,
+        [rowKey]: { repoId, quant, jobId: 'error:Network error. Check your connection.' },
+      }));
     }
   };
 
@@ -189,14 +192,14 @@ function CustomRepoField({
         return;
       }
       if (r.status !== 202) {
-        setServerError(`request failed (${r.status})`);
+        setServerError(`Request failed (HTTP ${r.status}).`);
         return;
       }
       onDownload(trimmedRepo, trimmedQuant);
       setRepoId('');
       setQuant('');
     } catch {
-      setServerError('network error');
+      setServerError('Network error. Check your connection.');
     }
   };
 
@@ -244,6 +247,6 @@ async function readError(r: Response): Promise<string> {
   } catch {
     /* non-JSON body */
   }
-  if (r.status === 507) return 'not enough free disk space';
-  return `failed (${r.status})`;
+  if (r.status === 507) return 'Not enough free disk space.';
+  return `Download failed (HTTP ${r.status}).`;
 }

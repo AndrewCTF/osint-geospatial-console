@@ -17,7 +17,7 @@ export function Sparkline({ points, field, width = 280, height = 36, label, unit
   if (ys.length < 2) {
     return (
       <div className="micro text-txt-3">
-        {label ?? field}: <span className="mono">— insufficient samples ({ys.length})</span>
+        {label ?? field}: <span className="mono">insufficient samples ({ys.length})</span>
       </div>
     );
   }
