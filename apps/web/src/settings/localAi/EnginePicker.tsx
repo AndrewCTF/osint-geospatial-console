@@ -55,13 +55,13 @@ export function EnginePicker({
         body: JSON.stringify({ engine: id }),
       });
       if (!r.ok) {
-        setErr(`switch failed (${r.status})`);
+        setErr(`Could not switch engines (HTTP ${r.status}).`);
         return;
       }
       const body = (await r.json()) as { ok: boolean; engine: EngineId };
       onChanged(body.engine);
     } catch {
-      setErr('network error');
+      setErr('Network error. Check your connection.');
     } finally {
       setBusy(null);
     }

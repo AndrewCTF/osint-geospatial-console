@@ -555,7 +555,7 @@ async def _cluster_events(
     )
     parsed, res = await llm.chat_json(
         [
-            {"role": "system", "content": _CLUSTER_SYSTEM + _INJECTION_GUARD},
+            {"role": "system", "content": llm.with_prose_style(_CLUSTER_SYSTEM) + _INJECTION_GUARD},
             {"role": "user", "content": user},
         ],
         tier="reason",
@@ -607,7 +607,10 @@ async def _refine_event(
         parsed, res = await asyncio.wait_for(
             llm.chat_json(
                 [
-                    {"role": "system", "content": _REFINE_SYSTEM + _INJECTION_GUARD},
+                    {
+                        "role": "system",
+                        "content": llm.with_prose_style(_REFINE_SYSTEM) + _INJECTION_GUARD,
+                    },
                     {"role": "user", "content": user},
                 ],
                 tier="reason",
@@ -647,7 +650,7 @@ async def _single_shot(
     )
     parsed, res = await llm.chat_json(
         [
-            {"role": "system", "content": _ANALYZE_SYSTEM + _INJECTION_GUARD},
+            {"role": "system", "content": llm.with_prose_style(_ANALYZE_SYSTEM) + _INJECTION_GUARD},
             {"role": "user", "content": user},
         ],
         tier="reason",
@@ -784,7 +787,7 @@ async def factcheck(
 
     parsed, res = await llm.chat_json(
         [
-            {"role": "system", "content": _FACTCHECK_SYSTEM},
+            {"role": "system", "content": llm.with_prose_style(_FACTCHECK_SYSTEM)},
             {"role": "user", "content": user},
         ],
         tier="fast" if fast else "reason",
@@ -973,7 +976,10 @@ async def _enrich_batch(batch: list[dict[str, Any]]) -> str | None:
         parsed, res = await asyncio.wait_for(
             llm.chat_json(
                 [
-                    {"role": "system", "content": _EDITION_BATCH_SYSTEM + _INJECTION_GUARD},
+                    {
+                        "role": "system",
+                        "content": llm.with_prose_style(_EDITION_BATCH_SYSTEM) + _INJECTION_GUARD,
+                    },
                     {"role": "user", "content": user},
                 ],
                 tier="reason",

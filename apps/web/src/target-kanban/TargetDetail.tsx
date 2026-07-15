@@ -191,7 +191,7 @@ function OverviewTab({
           )}
         </Widget>
       ) : (
-        <MicroLabel className="block">final stage — kill chain complete</MicroLabel>
+        <MicroLabel className="block">final stage: kill chain complete</MicroLabel>
       )}
     </>
   );
@@ -303,7 +303,7 @@ function WeaponeerTab({ entry }: { entry: TargetEntry }): JSX.Element {
   return (
     <Widget title="Weaponeering solutions" count={String(sols.length)}>
       <MicroLabel className="block mb-1.5">
-        notional open-source estimate — single-shot Pk → rounds for 90% effect. NOT a JMEM product.
+        notional open-source estimate: single-shot Pk → rounds for 90% effect. NOT a JMEM product.
       </MicroLabel>
       <ul className="space-y-1.5">
         {sols.map((s) => {

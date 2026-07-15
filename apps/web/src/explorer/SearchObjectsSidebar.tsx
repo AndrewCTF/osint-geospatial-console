@@ -165,7 +165,7 @@ export function SearchObjectsSidebar({ viewer }: { viewer: Cesium.Viewer | null 
       })
       .catch((e: unknown) => {
         if (e instanceof DOMException && e.name === 'AbortError') return;
-        setErr('search failed');
+        setErr('Search failed.');
       })
       .finally(() => setLoading(false));
   };
@@ -410,7 +410,7 @@ export function SearchObjectsSidebar({ viewer }: { viewer: Cesium.Viewer | null 
                     <CoordEntry
                       viewer={viewer}
                       fly={false}
-                      placeholder={`Region ${slot} — coord or place`}
+                      placeholder={`Region ${slot} (coord or place)`}
                       onPlace={(lat, lon) =>
                         setRegion(slot, { center: { lat, lon }, radiusKm: radii[slot] })
                       }
@@ -527,7 +527,7 @@ export function SearchObjectsSidebar({ viewer }: { viewer: Cesium.Viewer | null 
             {data.results.length === 0 && (
               <div className="mono text-[11px] text-txt-3 py-4 text-center">
                 {!loading && <SearchX aria-hidden className="h-5 w-5 mx-auto mb-1.5 text-txt-4" />}
-                {loading ? 'searching…' : 'No results yet — set your scope and hit Search.'}
+                {loading ? 'searching…' : 'No results yet. Set your scope and select Search.'}
               </div>
             )}
           </div>

@@ -373,14 +373,14 @@ export function CopControl({
     try {
       const r = await apiFetch('/api/maps');
       if (!r.ok) {
-        setStatus(r.status === 401 ? 'sign in to save maps' : r.status === 503 ? 'maps need Supabase' : `list failed (${r.status})`);
+        setStatus(r.status === 401 ? 'sign in to save maps' : r.status === 503 ? 'maps need Supabase' : `Could not load your maps (HTTP ${r.status}).`);
         setMaps([]);
         return;
       }
       setMaps((await r.json()) as SavedMap[]);
       setStatus(null);
     } catch {
-      setStatus('list failed');
+      setStatus('Could not load your maps.');
     }
   }, []);
 
@@ -432,7 +432,7 @@ export function CopControl({
   );
 
   const onSave = useCallback(async () => {
-    const name = window.prompt('Save current view as map — name:');
+    const name = window.prompt('Save current view as map. Name:');
     if (!name) return;
     try {
       const r = await apiFetch('/api/maps', {
@@ -441,13 +441,13 @@ export function CopControl({
         body: JSON.stringify({ name, state: serializeState() }),
       });
       if (!r.ok) {
-        setStatus(r.status === 401 ? 'sign in to save' : r.status === 503 ? 'maps need Supabase' : `save failed (${r.status})`);
+        setStatus(r.status === 401 ? 'sign in to save' : r.status === 503 ? 'maps need Supabase' : `Could not save the map (HTTP ${r.status}).`);
         return;
       }
       setStatus('saved');
       await refreshList();
     } catch {
-      setStatus('save failed');
+      setStatus('Could not save the map.');
     }
   }, [serializeState, refreshList]);
 
@@ -456,13 +456,13 @@ export function CopControl({
       try {
         const r = await apiFetch(`/api/maps/${encodeURIComponent(id)}`);
         if (!r.ok) {
-          setStatus(`load failed (${r.status})`);
+          setStatus(`Could not load the map (HTTP ${r.status}).`);
           return;
         }
         restoreState(((await r.json()) as SavedMap).state);
         setStatus('loaded');
       } catch {
-        setStatus('load failed');
+        setStatus('Could not load the map.');
       }
     },
     [restoreState],
@@ -482,7 +482,7 @@ export function CopControl({
         if (followingId === id) stopFollow();
         await refreshList();
       } catch {
-        setStatus('delete failed');
+        setStatus('Could not delete the map.');
       }
     },
     [followingId, refreshList, stopFollow],
@@ -577,7 +577,7 @@ export function CopControl({
       )}
       <button
         type="button"
-        title="Shared common operational picture — save / load / follow a named map"
+        title="Shared common operational picture (save, load, or follow a named map)"
         onClick={() => setOpen((v) => !v)}
         className={`mono text-[10px] px-2 py-1 border rounded-sm bg-bg-1/90 ${followingId ? 'border-accent-line text-accent' : 'border-line text-txt-1 hover:border-accent-line hover:text-accent'}`}
       >
@@ -682,7 +682,7 @@ export function AuthNotice(): JSX.Element | null {
       <div className="pointer-events-auto bg-bg-1/95 border border-accent-line rounded-md px-4 py-3 shadow-xl max-w-sm text-center">
         <p className="text-txt-0 text-[13px] font-semibold">Sign in to load live data</p>
         <p className="text-txt-2 text-[11px] mt-1 leading-snug">
-          Live aircraft, vessels &amp; intel need an account — the globe stays blank until you sign
+          Live aircraft, vessels &amp; intel need an account. The globe stays blank until you sign
           in.
         </p>
         <Link

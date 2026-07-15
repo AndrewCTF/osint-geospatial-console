@@ -23,15 +23,15 @@ export function WeatherCard({ lat, lon }: { lat: number; lon: number }): JSX.Ele
     setErr(null);
     apiFetch(`/api/weather/openmeteo?lat=${lat}&lon=${lon}`)
       .then((r) => {
-        if (r.status === 503) throw new Error('unavailable (commercial mode)');
-        if (!r.ok) throw new Error(`weather ${r.status}`);
+        if (r.status === 503) throw new Error('Weather unavailable (commercial mode)');
+        if (!r.ok) throw new Error(`Weather unavailable (HTTP ${r.status})`);
         return r.json();
       })
       .then((j: { current?: Weather }) => {
         if (!cancelled) setWx(j.current ?? null);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setErr(e instanceof Error ? e.message : 'weather failed');
+        if (!cancelled) setErr(e instanceof Error ? e.message : 'Weather unavailable.');
       });
     return () => {
       cancelled = true;

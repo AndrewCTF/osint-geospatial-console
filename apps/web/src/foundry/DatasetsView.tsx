@@ -169,7 +169,7 @@ function ChecksSection({ datasetId }: { datasetId: string }): JSX.Element {
             })}
           </tbody>
         </table>
-        {checks.length === 0 && <div className="px-2.5 py-3 text-center mono text-[11px] text-txt-3">No checks yet — add one to gate every version write.</div>}
+        {checks.length === 0 && <div className="px-2.5 py-3 text-center mono text-[11px] text-txt-3">No checks yet. Add one to gate every version write.</div>}
       </div>
     </div>
   );
@@ -187,7 +187,7 @@ function DocsTab({ dataset, docs }: { dataset: Dataset; docs: DatasetDocs | null
     <div className="space-y-3" data-testid="docs-tab">
       <div className="rounded-md border border-line-2 bg-bg-1 p-3">
         <div className="text-[10px] uppercase tracking-[0.4px] text-txt-3 mb-1">Description</div>
-        <div className="text-[11px] text-txt-1">{docs.dataset.description || <span className="text-txt-4">— no description —</span>}</div>
+        <div className="text-[11px] text-txt-1">{docs.dataset.description || <span className="text-txt-4">(no description)</span>}</div>
         <div className="flex items-center gap-2 mt-2 flex-wrap">
           <Badge tone={docs.dataset.kind === 'raw' ? 'accent' : 'mag'}>{docs.dataset.kind}</Badge>
           <span className="mono text-[10px] text-txt-2">v{docs.dataset.latest_version}</span>
@@ -218,7 +218,7 @@ function DocsTab({ dataset, docs }: { dataset: Dataset; docs: DatasetDocs | null
             <>Produced by{' '}
               <button className="mono text-accent hover:underline" onClick={() => navigate('pipeline', lin.produced_by!)}>{lin.produced_by}</button>
             </>
-          ) : 'Raw dataset — each column is its own source.'}
+          ) : 'Raw dataset: each column is its own source.'}
         </div>
         {lin.upstream_datasets.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -337,7 +337,7 @@ function DatasetDetail({ dataset }: { dataset: Dataset }): JSX.Element {
     }
   };
   const onRollback = async (v: number): Promise<void> => {
-    if (await confirm({ title: `Roll back "${dataset.name}" to v${v}?`, body: 'Creates a new latest version from v' + v + ' — does not delete history.', confirmLabel: 'Roll back' })) {
+    if (await confirm({ title: `Roll back "${dataset.name}" to v${v}?`, body: 'Creates a new latest version from v' + v + '. Does not delete history.', confirmLabel: 'Roll back' })) {
       const d = await rollbackDataset(dataset.id, v);
       if (d) refresh();
     }
@@ -377,7 +377,7 @@ function DatasetDetail({ dataset }: { dataset: Dataset }): JSX.Element {
                 ))}
               </tbody>
             </table>
-            {dataset.schema.length === 0 && <div className="px-2.5 py-3 text-center mono text-[11px] text-txt-3">No columns — upload data to infer a schema.</div>}
+            {dataset.schema.length === 0 && <div className="px-2.5 py-3 text-center mono text-[11px] text-txt-3">No columns. Upload data to infer a schema.</div>}
           </div>
         )}
 
@@ -451,7 +451,7 @@ function DatasetDetail({ dataset }: { dataset: Dataset }): JSX.Element {
         {tab === 'lineage' && (
           <div className="rounded-md border border-line-2 bg-bg-1 p-3 space-y-2">
             <div className="text-[11px] text-txt-2">
-              {lineage?.produced_by ? <>Produced by <span className="mono text-accent">{lineage.produced_by}</span>{lineage.primary_input && <> from <span className="mono text-txt-1">{lineage.primary_input}</span></>}</> : 'Raw dataset — each column is its own source.'}
+              {lineage?.produced_by ? <>Produced by <span className="mono text-accent">{lineage.produced_by}</span>{lineage.primary_input && <> from <span className="mono text-txt-1">{lineage.primary_input}</span></>}</> : 'Raw dataset: each column is its own source.'}
             </div>
             <table className="w-full border-collapse">
               <thead><tr className={tableHeadCls()}><Th>Output column</Th><Th>Derives from</Th></tr></thead>
@@ -634,7 +634,7 @@ export function DatasetsView(): JSX.Element {
         <div className="space-y-3">
           <Field label="Name"><input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="my_dataset" className={controlCls} /></Field>
           <Field label="Description (optional)"><input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} className={controlCls} /></Field>
-          <p className="text-[10px] text-txt-4">Creates an empty dataset — upload a file next to add its first version.</p>
+          <p className="text-[10px] text-txt-4">Creates an empty dataset. Upload a file next to add its first version.</p>
         </div>
       </Modal>
 

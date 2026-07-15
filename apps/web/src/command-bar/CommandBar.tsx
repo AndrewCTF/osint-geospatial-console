@@ -318,16 +318,16 @@ const BASEMAP_OPTIONS: Array<{ value: ImageryMode; label: string; title: string 
   {
     value: 'esri-imagery',
     label: 'Esri imagery',
-    title: 'Esri World Imagery — Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    title: 'Esri World Imagery · Esri, Maxar, Earthstar Geographics, and the GIS User Community',
   },
-  { value: 'esri-topo', label: 'Esri topo', title: 'Esri World Topographic Map — Esri, HERE, Garmin, FAO, NOAA, USGS' },
-  { value: 'esri-dark', label: 'Esri dark', title: 'Esri Dark Gray Canvas — Esri' },
+  { value: 'esri-topo', label: 'Esri topo', title: 'Esri World Topographic Map · Esri, HERE, Garmin, FAO, NOAA, USGS' },
+  { value: 'esri-dark', label: 'Esri dark', title: 'Esri Dark Gray Canvas · Esri' },
   {
     value: 'opentopo',
     label: 'OpenTopo',
-    title: 'OpenTopoMap — Map data (c) OpenStreetMap contributors, SRTM | Map style (c) OpenTopoMap (CC-BY-SA)',
+    title: 'OpenTopoMap · Map data (c) OpenStreetMap contributors, SRTM | Map style (c) OpenTopoMap (CC-BY-SA)',
   },
-  { value: 'usgs-imagery', label: 'USGS imagery', title: 'USGS Imagery Only — USGS The National Map (public domain)' },
+  { value: 'usgs-imagery', label: 'USGS imagery', title: 'USGS Imagery Only · USGS The National Map (public domain)' },
   {
     value: 'eox-s2',
     label: 'EOX S2',

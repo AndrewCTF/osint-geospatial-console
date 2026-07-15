@@ -42,9 +42,9 @@ export function DossierNarrativeCard({ id, kind }: Props): JSX.Element | null {
         { method: 'POST' },
       );
       const body = (await r.json().catch(() => null)) as Narrative | null;
-      setData(body ?? { ok: false, error: 'request failed' });
+      setData(body ?? { ok: false, error: 'Could not load the assessment.' });
     } catch {
-      setData({ ok: false, error: 'request failed' });
+      setData({ ok: false, error: 'Could not load the assessment.' });
     } finally {
       setBusy(false);
     }
@@ -70,7 +70,7 @@ export function DossierNarrativeCard({ id, kind }: Props): JSX.Element | null {
         {data && data.ok === false && (
           <p className="text-[10.5px] text-warn">
             {data.error === 'model unavailable' || !data.error
-              ? 'Assessment unavailable — no reasoning model configured.'
+              ? 'Assessment unavailable. No reasoning model configured.'
               : data.error}
           </p>
         )}

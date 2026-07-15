@@ -135,7 +135,7 @@ export function SituationPanel({ id, viewer: _viewer }: Props): JSX.Element {
           </Widget>
         </div>
       ) : (
-        <p className="p-3 text-txt-3 text-[11px]">No AOI set — add a centroid to load imagery.</p>
+        <p className="p-3 text-txt-3 text-[11px]">No AOI set. Add a centroid to load imagery.</p>
       ),
     },
   ];
@@ -192,7 +192,7 @@ function SummaryTab({
       {heroTone && (
         <Hero tone={heroTone} title={`${sit.severity} situation`}>
           <p className="text-[11px] text-txt-1 leading-snug">
-            {sit.summary || 'No summary yet — describe what is happening and why it matters.'}
+            {sit.summary || 'No summary yet. Describe what is happening and why it matters.'}
           </p>
           <div className="flex items-center gap-3 mt-2.5 mono text-[10px] tabular-nums text-txt-3">
             <span>{childTotal} linked</span>
@@ -331,7 +331,7 @@ function ExportCard({ sit }: { sit: Situation }): JSX.Element {
           body: JSON.stringify({ fmt }),
         });
         if (!r.ok) {
-          toast.error(r.status === 503 ? 'PPTX engine unavailable' : `export failed (${r.status})`);
+          toast.error(r.status === 503 ? 'PPTX engine unavailable' : `Could not export (HTTP ${r.status}).`);
           return;
         }
         const blob = await r.blob();
@@ -343,7 +343,7 @@ function ExportCard({ sit }: { sit: Situation }): JSX.Element {
         URL.revokeObjectURL(url);
         toast.ok(`exported ${fmt.toUpperCase()}`);
       } catch {
-        toast.error('export failed (network)');
+        toast.error('Could not export. Network error.');
       } finally {
         setBusy(null);
       }

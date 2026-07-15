@@ -60,8 +60,7 @@ export function ExtractPanel({ situationId }: { situationId?: string }) {
         }),
       });
       if (!r.ok) {
-        const detail = await r.text();
-        setError(`${r.status}: ${detail.slice(0, 200)}`);
+        setError(`Extraction failed (HTTP ${r.status}).`);
         return;
       }
       setResult((await r.json()) as ExtractResponse);

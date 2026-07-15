@@ -104,6 +104,12 @@ def _connect(settings: Settings | None = None) -> sqlite3.Connection:
     return con
 
 
+# Retention: ``alert_deliveries`` is append-only and was never pruned
+# (unbounded ``alert_rules.db`` growth once rules fire regularly). Keep only the
+# newest N attempts — the log is a "did it reach my phone" proof, not an archive.
+DELIVERIES_KEEP = 5000
+
+
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -250,6 +256,13 @@ async def record_delivery(
                     rule_id, entity_id, transition, channel, target,
                     int(ok), status, error, message, ts,
                 ),
+            )
+            # Bound the append-only log: drop everything older than the newest
+            # DELIVERIES_KEEP rows (id is a monotonic rowid, so this is exact).
+            con.execute(
+                "DELETE FROM alert_deliveries WHERE id <= "
+                "(SELECT MAX(id) FROM alert_deliveries) - ?",
+                (DELIVERIES_KEEP,),
             )
             con.commit()
         finally:

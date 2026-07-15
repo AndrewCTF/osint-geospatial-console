@@ -92,6 +92,26 @@ Cadence / backend:
   MyShipTracking, ShipXplorer, USGS quakes, Carto basemap, CelesTrak. FIRMS
   degrades gracefully without MAP_KEY.
 
+Copy / voice (2026-07-15, docs/decisions.md#dashboard-copy-one-voice-no-em-dashes-2026-07-15):
+- Dashboard copy carries NO em dashes. Labels separate with ` · ` (subject-first
+  order clusters sibling layers in the rail); prose gets a real rewrite, not a
+  blanket colon swap. Comments are NOT copy and keep their em dashes.
+- A lone `'—'` means "no value reported" and is the §7 never-guess rule in the
+  UI. Never strip it while "removing em dashes".
+  → `entity-panel/placeCards.test.tsx`
+- Model prose rendered in the dashboard (selection brief, pattern-of-life,
+  watch officer, country brief, news) goes through `llm.with_prose_style()`,
+  appended LAST so the caller's format contract wins, and BEFORE
+  `_INJECTION_GUARD` so the security boundary stays the final instruction.
+  → `tests/test_prose_style.py`
+- Errors the user sees are sentences that keep the code (`Cameras unavailable
+  (HTTP 503)`), never raw internals (`cams 503`). Lowercase micro-labels
+  (`loading…`, `saving…`) STAY: that register is deliberate, not sloppiness.
+- TRACE A STRING TO A RENDER BEFORE REWRITING IT. Three things look like copy
+  and are not: state enums (`setStatus('idle')`, build `'failed'`), parsed
+  sentinels (`'error:<msg>'` job ids, `=== 'model unavailable'`), and dead text
+  thrown into `.catch(() => …)` that never reaches the DOM.
+
 Auth:
 - `apiFetch` / `withWsKey` wrap every browser→backend call; raw `fetch` only
   for third-party hosts via scoped eslint ignore. → eslint +
@@ -114,9 +134,9 @@ Ontology (2026-07-07, docs/decisions.md#ontology-local-first-store-2026-07-07):
 - Backend tests from the **repo ROOT** (from `apps/api` the `.env` auth
   resolves → wall of 401s):
   `OSINT_DISABLE_BACKGROUND=1 apps/api/.venv/bin/pytest apps/api -q`
-  Baseline: **1675 passed + 1 skipped** (skip = opt-in live probe; measured
-  2026-07-14, branch ui-typography-wcag-sidebar, aircraft predicted-motion
-  wave). Never commit below the baseline you inherited. When you raise it,
+  Baseline: **1696 passed + 1 skipped** (skip = opt-in live probe; measured
+  2026-07-15, branch platform-hardening-and-copy-pass, security-hardening +
+  dashboard-copy waves). Never commit below the baseline you inherited. When you raise it,
   update the number/date/wave here and move the displaced line to
   `docs/decisions.md#backend-test-baseline-history` — this bullet stays a
   three-line fact, not a changelog.

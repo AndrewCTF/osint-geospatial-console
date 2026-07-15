@@ -187,7 +187,7 @@ export function useCachedFetch<T>(url: string | null): FetchState<T> {
     const ctrl = new AbortController();
     setState({ loading: true, error: null, data: null });
     apiFetch(url, { signal: ctrl.signal })
-      .then((r) => (r.ok ? (r.json() as Promise<T>) : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((r) => (r.ok ? (r.json() as Promise<T>) : Promise.reject(new Error(`Country data unavailable (HTTP ${r.status})`))))
       .then((data) => {
         cacheSet(url, data);
         if (!ctrl.signal.aborted) setState({ loading: false, error: null, data });

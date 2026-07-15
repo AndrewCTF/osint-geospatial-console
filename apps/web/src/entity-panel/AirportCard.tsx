@@ -89,7 +89,7 @@ function MetarBlock({ icao }: { icao: string }): JSX.Element {
     return <p className="mono text-[10px] tracking-[0.5px] uppercase text-txt-3">resolving metar…</p>;
   }
   if (!metar) {
-    return <p className="mono text-[10px] text-txt-3">METAR unavailable — non-reporting station</p>;
+    return <p className="mono text-[10px] text-txt-3">METAR unavailable (non-reporting station)</p>;
   }
   const fltCat = metar.fltCat ?? null;
   const fog = (fltCat === 'IFR' || fltCat === 'LIFR' || lowVisib(metar.visib)) ?? false;

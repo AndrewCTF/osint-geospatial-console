@@ -108,6 +108,39 @@ async def test_run_lifecycle_and_listing() -> None:
     assert runs[0]["id"] == run["id"]
 
 
+async def test_finish_run_prunes_beyond_retention_cap(monkeypatch) -> None:
+    """Runs are the append vector for workflows.db; finish_run must keep only
+    the newest N per workflow so the DB can't grow forever on a fast schedule."""
+    from app.workflows import store as store_mod
+
+    monkeypatch.setattr(store_mod, "RUNS_KEEP_PER_WORKFLOW", 3)
+    store = WorkflowStore()
+    wf = await store.create_workflow("wf_cap", "", _spec([], []))
+    for i in range(7):
+        r = await store.create_run(wf["id"], "manual")
+        await store.finish_run(r["id"], "succeeded", [f"run {i}"], None, {})
+    # list_runs' own LIMIT defaults to 50, so this reflects the DB, not the query.
+    runs = await store.list_runs(wf["id"], limit=100)
+    assert len(runs) == 3  # newest 3 kept, older 4 pruned on finish
+
+
+async def test_finish_run_retention_is_per_workflow(monkeypatch) -> None:
+    """Pruning one workflow's runs must never touch another workflow's."""
+    from app.workflows import store as store_mod
+
+    monkeypatch.setattr(store_mod, "RUNS_KEEP_PER_WORKFLOW", 2)
+    store = WorkflowStore()
+    wf_a = await store.create_workflow("wf_a", "", _spec([], []))
+    wf_b = await store.create_workflow("wf_b", "", _spec([], []))
+    for _ in range(4):
+        ra = await store.create_run(wf_a["id"], "manual")
+        await store.finish_run(ra["id"], "succeeded", [], None, {})
+    rb = await store.create_run(wf_b["id"], "manual")
+    await store.finish_run(rb["id"], "succeeded", [], None, {})
+    assert len(await store.list_runs(wf_a["id"], limit=100)) == 2
+    assert len(await store.list_runs(wf_b["id"], limit=100)) == 1  # untouched
+
+
 async def test_memory_get_set_all_and_reset() -> None:
     store = WorkflowStore()
     wf = await store.create_workflow("wf_mem", "", _spec([], []))

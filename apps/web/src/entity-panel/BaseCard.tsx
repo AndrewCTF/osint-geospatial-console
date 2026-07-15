@@ -36,7 +36,7 @@ export function BaseCard({
         </KV>
         <Caveat
           level="LIMITED DATA"
-          note="Wikidata name/branch/coords only — no capability or garrison source"
+          note="Wikidata name/branch/coords only (no capability or garrison source)"
           tone="neutral"
         />
       </div>

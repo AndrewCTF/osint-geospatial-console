@@ -167,6 +167,11 @@ class Settings(BaseSettings):
     # osint, imagery-detect). Bounds runaway loops and unauthenticated abuse of
     # paid inference / GPU time. 0 disables the limiter entirely.
     ratelimit_compute_per_min: int = 60  # RATELIMIT_COMPUTE_PER_MIN (0 = off)
+    # Per-client cap on the agent-facing /mcp endpoint. A tool-calling agent can
+    # fan a burst of tool calls into the rate-limited upstreams (adsb.lol UA
+    # rules, airplanes.live 200+text throttle, CelesTrak 403 bursts); this bounds
+    # /mcp request rate independently of the compute cap. 0 disables it.
+    mcp_ratelimit_per_min: int = 120  # MCP_RATELIMIT_PER_MIN (0 = off)
     # Hard ceiling on concurrently-running recon jobs; further POSTs get 429.
     recon_max_active_jobs: int = 4  # RECON_MAX_ACTIVE_JOBS
 

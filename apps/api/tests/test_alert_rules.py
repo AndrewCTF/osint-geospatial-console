@@ -134,6 +134,33 @@ def test_deliveries_endpoint_starts_empty(client: TestClient) -> None:
     assert r.json() == {"deliveries": []}
 
 
+async def test_record_delivery_caps_the_append_only_log(monkeypatch) -> None:
+    """alert_deliveries is append-only; record_delivery must bound it so the DB
+    can't grow forever once a rule fires on every sweep."""
+    from app.intel import alert_rules_local as arl
+
+    monkeypatch.setattr(arl, "DELIVERIES_KEEP", 5)
+
+    def _connect_count() -> int:
+        con = arl._connect()
+        try:
+            return con.execute("SELECT COUNT(*) FROM alert_deliveries").fetchone()[0]
+        finally:
+            con.close()
+
+    for i in range(12):
+        await arl.record_delivery(
+            rule_id="r1", entity_id=f"e{i}", transition="enter",
+            channel="discord", target="https://x", ok=True, status=200,
+            error=None, message=f"m{i}",
+        )
+    # newest DELIVERIES_KEEP+1 survive (rows with id > max_id - KEEP); the log
+    # stays bounded regardless of how many attempts fire.
+    assert _connect_count() <= arl.DELIVERIES_KEEP + 1
+    recent = await arl.recent_deliveries(limit=100)
+    assert [d["entity_id"] for d in recent[:2]] == ["e11", "e10"]  # newest first
+
+
 # ── Supabase path (unchanged behavior when configured) ────────────────────────
 
 

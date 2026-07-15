@@ -50,7 +50,7 @@ export function LeftIconRail({
       <button
         key={it.id}
         type="button"
-        title={isFloating ? `${it.label} (floating — click to dock)` : it.label}
+        title={isFloating ? `${it.label} (floating; click to dock)` : it.label}
         aria-pressed={on}
         onClick={() => (isFloating ? (redock(it.id), setOpen(it.id)) : setOpen(on ? null : it.id))}
         className={`relative w-11 h-11 flex items-center justify-center shrink-0 transition-colors ${
@@ -96,7 +96,7 @@ export function LeftIconRail({
                   setOpen(null);
                 }}
                 aria-label="Detach panel into a floating window"
-                title="Detach — pop out into a movable window"
+                title="Detach into a movable window"
                 className="text-txt-3 hover:text-accent px-1 flex items-center"
               >
                 <PanelRightOpen size={13} strokeWidth={1.75} aria-hidden />

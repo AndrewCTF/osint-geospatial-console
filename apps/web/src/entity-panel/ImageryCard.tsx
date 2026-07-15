@@ -245,7 +245,7 @@ export function ImageryCard({ id, kind }: { id: string; kind: string }): JSX.Ele
         archived passes · not live · dates as labeled
       </MicroLabel>
       {maxarTimedOut && (
-        <MicroLabel className="block text-warn">Maxar crawl timed out — list may be partial</MicroLabel>
+        <MicroLabel className="block text-warn">Maxar crawl timed out; list may be partial</MicroLabel>
       )}
       {note && <p className="mono text-[10px] text-txt-3 leading-snug mt-1">{note}</p>}
     </Widget>
@@ -291,7 +291,7 @@ function ImageryRow({ entityId, match }: { entityId: string; match: ImageryMatch
           title={
             cr
               ? 'Drape this scene’s footprint as a chip on the globe'
-              : 'scene footprint unknown — cannot frame a chip'
+              : 'Cannot frame a chip: scene footprint unknown'
           }
           onClick={drape}
         >

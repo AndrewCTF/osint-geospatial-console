@@ -69,7 +69,7 @@ export function AppSwitcher(): JSX.Element {
                 key={id}
                 type="button"
                 onClick={() => setApp(id)}
-                title={`${APP_META[id].label} — ${APP_META[id].hint}`}
+                title={`${APP_META[id].label} · ${APP_META[id].hint}`}
                 aria-current={active ? 'page' : undefined}
                 aria-label={APP_META[id].label}
                 className={`relative h-full flex items-center gap-1.5 font-label uppercase tracking-[0.9px] text-[11px] transition-colors ${

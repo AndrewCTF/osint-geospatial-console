@@ -299,7 +299,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
         signal: ctrl.signal,
         headers: { Accept: 'text/event-stream' },
       });
-      if (!r.ok || !r.body) throw new Error(`agent failed (${r.status})`);
+      if (!r.ok || !r.body) throw new Error(`Agent request failed (HTTP ${r.status})`);
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
@@ -678,7 +678,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
                         <span className="mono text-[10px] text-txt-3">{f.id.slice(0, 8)}</span>
                         <span className="text-[10.5px] text-txt-1">
                           <span className="text-txt-0">{f.label}</span>
-                          {f.why && <span className="text-txt-3"> — {f.why}</span>}
+                          {f.why && <span className="text-txt-3"> · {f.why}</span>}
                         </span>
                         <Badge tone={threatTone(f.threat)}>{f.threat ?? '—'}</Badge>
                       </button>
@@ -703,7 +703,7 @@ export function AgentConsole({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
 
               {result.derived && (
                 <div className="mono text-[10px] text-txt-4 mt-3">
-                  synthesised from the brief (the reasoning model did not return a clean final) — findings are the fused incidents.
+                  synthesised from the brief (the reasoning model did not return a clean final). Findings are the fused incidents.
                 </div>
               )}
             </>

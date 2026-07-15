@@ -119,7 +119,7 @@ export function UploadModal({
     <Modal
       open={open}
       onClose={close}
-      title={versionMode ? `Upload version — ${existing?.name}` : 'Upload dataset'}
+      title={versionMode ? `Upload version · ${existing?.name}` : 'Upload dataset'}
       width={560}
       footer={
         result ? (
@@ -157,7 +157,7 @@ export function UploadModal({
             </div>
           )}
           <p className="text-[10px] text-txt-4">
-            Ontology auto-sync ran on enabled bindings — see the banner in Datasets.
+            Ontology auto-sync ran on enabled bindings. See the banner in Datasets.
           </p>
         </div>
       ) : (

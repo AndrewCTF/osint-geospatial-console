@@ -80,7 +80,7 @@ export function VelocityNewsPage(): JSX.Element {
 
         <div className="vn-masthead">
           <Link to="/news" className="vn-brand">VELOCITY <mark>NEWS</mark></Link>
-          <div className="vn-tagline">Every story, de-spun — bias &amp; propaganda flagged, sources shown</div>
+          <div className="vn-tagline">Every story, de-spun: bias &amp; propaganda flagged, sources shown</div>
         </div>
 
         <nav className="vn-nav">
@@ -98,7 +98,7 @@ export function VelocityNewsPage(): JSX.Element {
           </>
         )}
         {err && <div className="vn-state">News is unavailable right now. Please try again shortly.</div>}
-        {ed && stories.length === 0 && <div className="vn-state">Today’s edition is being assembled — check back in a moment.</div>}
+        {ed && stories.length === 0 && <div className="vn-state">Today’s edition is still being assembled.</div>}
 
         {lead && (
           <section className="vn-hero">

@@ -43,6 +43,36 @@ from app.config import Settings, get_settings
 
 _log = logging.getLogger("app.llm")
 
+# ── house prose style ─────────────────────────────────────────────────────────
+
+# Appended to the system prompt of every model call whose prose is rendered
+# verbatim in the dashboard (selection briefs, pattern-of-life, watch-officer
+# read, country brief, news analysis). Operator decision 2026-07-15: dashboard
+# copy is written in one voice, and a model left unconstrained drifts into em
+# dashes and marketing register within a few sentences. Style only — it must
+# never touch grounding, hedging, or the caveat rules each caller sets, so keep
+# it additive and put it LAST in the system string.
+PROSE_STYLE = (
+    "STYLE (applies to the wording of every sentence you write, and never "
+    "overrides the output format required above): write as a professional "
+    "analyst in plain, direct sentences. Never use em dashes; use a period, "
+    "comma, colon, semicolon, or parentheses instead. No marketing language, "
+    "no hype, no filler, no rhetorical questions. Prefer the specific term "
+    "over the vague one, and state uncertainty plainly rather than dressing "
+    "it up."
+)
+
+
+def with_prose_style(system: str) -> str:
+    """Append the house prose style to an analyst system prompt.
+
+    Always appended LAST so the caller's own format contract (STRICT JSON,
+    markdown section headings) is stated before the style rider and wins on
+    any conflict. Style only: it must never touch grounding or hedging rules.
+    """
+    return f"{system.rstrip()}\n\n{PROSE_STYLE}"
+
+
 # ── tiers ─────────────────────────────────────────────────────────────────────
 
 # Map task tiers → concrete DeepSeek model ids. Resolved against Settings at

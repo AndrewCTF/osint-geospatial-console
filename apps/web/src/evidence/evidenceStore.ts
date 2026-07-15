@@ -93,7 +93,7 @@ export const useEvidence = create<EvidenceState>((set) => ({
       if (r.ok) set({ items: (await r.json()) as EvidenceObject[], error: null });
       else set({ error: `load failed (${r.status})` });
     } catch {
-      set({ error: 'offline — could not load evidence' });
+      set({ error: 'Could not load evidence. You appear to be offline.' });
     } finally {
       set({ loading: false });
     }

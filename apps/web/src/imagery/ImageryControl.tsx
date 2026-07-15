@@ -93,7 +93,7 @@ function changeProviderLabel(provider: string): string {
 // Curated war-damage AOIs (Sentinel-1 SAR collapse candidates, red). Each maps
 // to a backend AOI key in app/intel/sar_damage.py.
 const DAMAGE_AOIS: { id: string; label: string }[] = [
-  { id: 'beirut-dahieh', label: 'Beirut — Dahieh (2024)' },
+  { id: 'beirut-dahieh', label: 'Beirut · Dahieh (2024)' },
   { id: 'south-lebanon', label: 'South Lebanon (2024)' },
   { id: 'gaza-city', label: 'Gaza City (2023–24)' },
   { id: 'khan-younis', label: 'Khan Younis (2023–24)' },
@@ -202,7 +202,7 @@ export function ImageryControl() {
         return null;
       });
       setChangeMeta(null);
-      setChangeError(e instanceof Error ? e.message : 'failed');
+      setChangeError(e instanceof Error ? e.message : 'change detection failed');
     } finally {
       setChangeLoading(false);
     }
@@ -269,14 +269,14 @@ export function ImageryControl() {
       const r = await apiFetch(
         `/api/events/all?lat=${lat}&lon=${lon}&radius_km=${eventsRadiusKm}`,
       );
-      if (!r.ok) throw new Error(`events ${r.status}`);
+      if (!r.ok) throw new Error(`Events unavailable (HTTP ${r.status})`);
       const b: EventsAllResponse = await r.json();
       setEvents(b.features ?? []);
       setEventsSummary(b.sources ?? null);
     } catch (e) {
       setEvents([]);
       setEventsSummary(null);
-      setEventsError(e instanceof Error ? e.message : 'failed');
+      setEventsError(e instanceof Error ? e.message : 'events unavailable');
     } finally {
       setEventsLoading(false);
     }
@@ -639,7 +639,7 @@ export function ImageryControl() {
         </Btn>
         <label
           className="flex items-center gap-2 cursor-pointer select-none"
-          title="Keyless: auto-extrude OSM buildings for the current view every time the camera settles — pan across any city and it fills in 3D, no clicking"
+          title="Keyless: auto-extrude OSM buildings for the current view every time the camera settles; pan across any city and it fills in 3D, no clicking"
         >
           <input
             type="checkbox"

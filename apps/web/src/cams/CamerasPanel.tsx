@@ -32,7 +32,7 @@ export function CamerasPanel({ viewer }: { viewer: unknown }): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     apiFetch('/api/cams')
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`cams ${r.status}`))))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Cameras unavailable (HTTP ${r.status})`))))
       .then((fc: { features?: Array<Record<string, unknown>> }) => {
         if (cancelled) return;
         const list: Cam[] = [];
@@ -51,7 +51,7 @@ export function CamerasPanel({ viewer }: { viewer: unknown }): JSX.Element {
         setCams(list);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setErr(e instanceof Error ? e.message : 'cams failed');
+        if (!cancelled) setErr(e instanceof Error ? e.message : 'Cameras unavailable.');
       });
     return () => {
       cancelled = true;

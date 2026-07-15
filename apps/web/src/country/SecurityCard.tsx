@@ -77,7 +77,7 @@ export function SecurityCard({ state }: { state: FetchState<SecurityResponse> })
           {data.events.length === 0 ? (
             <div className="mono text-[10px] text-txt-4">
               No matching events in the last {data.window_hours} h
-              {data.sources.ucdp?.unavailable ? ' — UCDP source token-gated' : ''}.
+              {data.sources.ucdp?.unavailable ? ' (UCDP source token-gated)' : ''}.
             </div>
           ) : (
             <div className="flex flex-col">

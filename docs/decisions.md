@@ -738,6 +738,12 @@ The current baseline lives in `CLAUDE.md` (Environment facts) and stays a
 three-line fact there. One line per wave, newest first — when the CLAUDE.md
 number changes, the displaced line lands here.
 
+- **1696 +1 skip** — 2026-07-15, platform-hardening-and-copy-pass:
+  security-hardening wave (unauthenticated `/api/workflows` code-exec closed via
+  the compute fail-closed gate, `/mcp` rate limit, `op.http` strict-SSRF opt-in,
+  workflows.db + alert_rules.db retention caps).
+- **1687 +1 skip** — 2026-07-15, dashboard-copy wave (house prose style for
+  model output that renders in the dashboard, `test_prose_style.py`).
 - **1675 +1 skip** — 2026-07-14, ui-typography-wcag-sidebar: aircraft
   predicted-motion wave (freshest-observation snapshot union + along-track
   no-reverse guards, `test_adsb_no_reverse.py`).
@@ -960,3 +966,80 @@ Supporting decisions, all load-bearing:
 Do NOT reintroduce any easing/interpolation toward a fix: that is what made the
 speed arbitrary and the reverse visible. The default TELEPORT path is unchanged
 and still forbids extrapolation. → `globe/adapters/deadReckon.test.ts`.
+
+### Dashboard copy: one voice, no em dashes (2026-07-15)
+
+Operator: *"improve wording for the whole dashboard, remove em dashes. make it
+feel more human and use PROFESSIONAL LANGUAGE ONLY."*
+
+Follow-on to the 2026-07-13 typography pass, which found that "looks AI" was the
+type system rather than the typeface. The same verdict applies to the words: the
+tell was punctuation and register, not vocabulary.
+
+**Scope was the hard part.** The repo had ~1,490 em dashes. Only ~320 were
+dashboard copy:
+
+- **~1,056 are in code comments** and carry decision history. Comments are not
+  dashboard wording. They were left alone, deliberately, in every file.
+- **~91 are the standalone `'—'` null placeholder** in tables and KV rows,
+  meaning "no value reported". That is a data convention, not prose, and it is
+  guarded by `entity-panel/placeCards.test.tsx` ("shows — for ILS CAT on a
+  non-US runway rather than guessing"). It implements the §7 never-guess rule.
+  Untouched. Do not "finish the job" by stripping these: it breaks a guard and
+  reintroduces guessing.
+
+**Two patterns, not one substitution.** Mechanically swapping every ` — ` for a
+colon just trades one tic for another.
+
+- *Labels* (`'Quakes — USGS (24h)'`, `'Aircraft — Military'`) use ` · `. The
+  subject-first word order is load-bearing: it clusters sibling layers in the
+  rail. Reflowing to `'USGS quakes'` breaks that and was rejected.
+- *Prose* is rewritten per sentence (period, comma, colon, semicolon, or
+  parentheses, whichever actually fits).
+
+**Caveats survive verbatim in meaning.** This is an intelligence tool. Rewrites
+of "notional war-game entity — not a real contact", "shortlist, not a positive
+ID", and the vessel MISMATCH/spoof verdict preserved every warning, hedge,
+number, and unit. Copy changes must never soften an epistemic claim.
+
+**The static strings were only half the dashboard.** Selection briefs,
+pattern-of-life, the watch-officer read, country briefs, and news analysis are
+model prose rendered verbatim, and the prompts both contained em dashes and
+never constrained output style. A model copies the register of its instructions,
+so the prompts demonstrated the exact habit we were removing. Fixed with one
+shared rider, `llm.PROSE_STYLE` + `llm.with_prose_style()`, appended LAST so the
+caller's format contract (STRICT JSON, markdown headings) is stated first and
+wins on conflict. It is style-only and never touches grounding or hedging rules.
+
+In `news/analyze.py` the rider goes BEFORE `_INJECTION_GUARD`: the guard is a
+security control and stays the last thing the model reads, so nothing follows
+the untrusted-content boundary that could dilute it.
+→ `tests/test_prose_style.py`
+
+**Error copy (same wave).** Operator: *"all text must be professional."* Raw
+internals were rendering as user text: `CamerasPanel.tsx` caught
+`new Error(\`cams ${r.status}\`)` into `setErr` and rendered `{err}`, so the UI
+literally read **"cams 503"**. Two operator decisions:
+
+1. **Lowercase micro-labels STAY** (`loading…`, `no saved maps`, `saving…`,
+   `point added ✓`). That terse register is deliberate ops-terminal design
+   language, not sloppiness. Do not sentence-case it.
+2. **Errors are readable sentences that KEEP the status code**:
+   `cams 503` → `Cameras unavailable (HTTP 503)`; `save failed` → `Could not
+   save the map.`; `network error` → `Network error. Check your connection.`
+
+Three traps found while doing it, all of which look like copy and are not:
+- **State-machine values.** `ChipLayer.tsx` `setStatus('idle'|'loading'|'error')`
+  and Foundry's `status: 'running' | 'succeeded' | 'failed'` are enums compared
+  with `===`. Rewriting them as "copy" breaks logic.
+- **Parsed sentinels.** `CatalogBrowser`'s `'error:<msg>'` job-id prefix is read
+  by `isErrorJob`/`.slice()`; `DossierNarrativeCard` compares
+  `data.error === 'model unavailable'`.
+- **Dead text.** `acars ${r.status}`, `chip ${r.status}`, `overpass ${r.status}`,
+  and `cams ${r.status}` in TrafficSimSection are all thrown into `.catch(() =>
+  …)` handlers that take no argument, so the message never reaches the DOM.
+  They are developer diagnostics and were deliberately LEFT.
+
+Rule that falls out: **trace a string to a render before rewriting it.** Also
+kept intact: the evidence locker's forensic warnings (`hash MISMATCH: blob
+altered or missing`) and every `'—'` null placeholder.

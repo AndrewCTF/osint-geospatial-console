@@ -9,7 +9,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.usgs.quakes',
     group: 'hazards',
-    title: 'Quakes — USGS (24h)',
+    title: 'Quakes · USGS (24h)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/eq?range=day',
@@ -24,7 +24,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.emsc.quakes',
     group: 'hazards',
-    title: 'Quakes — EMSC (24h, M≥2.5)',
+    title: 'Quakes · EMSC (24h, M≥2.5)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/seismic/emsc?minmag=2.5&hours=24',
@@ -43,7 +43,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.nasa.firms',
     group: 'hazards',
-    title: 'Fires — NASA FIRMS VIIRS',
+    title: 'Fires · NASA FIRMS VIIRS',
     kind: 'geojson',
     auth: 'apikey',
     endpoint: '/api/firms?source=VIIRS_SNPP_NRT&days=1',
@@ -58,7 +58,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.nasa.eonet',
     group: 'hazards',
-    title: 'Events — NASA EONET (open)',
+    title: 'Events · NASA EONET (open)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/events/eonet?status=open&limit=500',
@@ -73,7 +73,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.nws.alerts',
     group: 'hazards',
-    title: 'NWS — Active alerts (US)',
+    title: 'NWS · Active alerts (US)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/weather/alerts',
@@ -92,7 +92,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'aviation.adsb.global',
     group: 'aviation',
-    title: 'Aircraft — Global (multi-source ADS-B)',
+    title: 'Aircraft · Global (multi-source ADS-B)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/adsb/global',
@@ -113,7 +113,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'aviation.adsb.fi.global',
     group: 'aviation',
-    title: 'Aircraft — adsb.fi (global snapshot)',
+    title: 'Aircraft · adsb.fi (global snapshot)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/adsb/fi/global',
@@ -129,7 +129,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'aviation.opensky.states',
     group: 'aviation',
-    title: 'Aircraft — OpenSky (auth optional)',
+    title: 'Aircraft · OpenSky (auth optional)',
     kind: 'geojson',
     auth: 'oauth2-cc',
     endpoint: '/api/aviation/states',
@@ -144,7 +144,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'aviation.adsb.live.mil',
     group: 'aviation',
-    title: 'Aircraft — Military (airplanes.live)',
+    title: 'Aircraft · Military (airplanes.live)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/adsb/live/mil',
@@ -159,7 +159,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'aviation.adsb.live.emergencies',
     group: 'aviation',
-    title: 'Aircraft — Emergency squawks (7500/7600/7700)',
+    title: 'Aircraft · Emergency squawks (7500/7600/7700)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/adsb/live/emergencies',
@@ -181,7 +181,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'env.jamming.nacp',
     group: 'env',
-    title: 'GPS jamming — ADS-B NACp cells',
+    title: 'GPS jamming · ADS-B NACp cells',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/jamming/nacp',
@@ -200,7 +200,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.digitraffic',
     group: 'maritime',
-    title: 'Vessels — Digitraffic Baltic (no key)',
+    title: 'Vessels · Digitraffic Baltic (no key)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/maritime/digitraffic',
@@ -226,7 +226,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.keyless',
     group: 'maritime',
-    title: 'Vessels — live (all AIS sources, 24/7)',
+    title: 'Vessels · live (all AIS sources, 24/7)',
     kind: 'geojson',
     auth: 'none',
     // Unified vessel store: latest fix per MMSI across EVERY AIS source
@@ -252,7 +252,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.parked',
     group: 'maritime',
-    title: 'Parking mode — parked / anchored ships',
+    title: 'Parking mode · parked / anchored ships',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/maritime/snapshot?parked=1',
@@ -267,7 +267,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.aisstream',
     group: 'maritime',
-    title: 'Vessels — AISStream (live)',
+    title: 'Vessels · AISStream (live)',
     kind: 'websocket',
     auth: 'apikey',
     endpoint: '/ws/ais',
@@ -295,7 +295,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.sar.hormuz',
     group: 'maritime',
-    title: 'Vessels — Sentinel-1 SAR (Hormuz, no key)',
+    title: 'Vessels · Sentinel-1 SAR (Hormuz, no key)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/intel/dark-vessels/sar?aoi=hormuz',
@@ -314,7 +314,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.sar.bab-el-mandeb',
     group: 'maritime',
-    title: 'Vessels — Sentinel-1 SAR (Bab-el-Mandeb, no key)',
+    title: 'Vessels · Sentinel-1 SAR (Bab-el-Mandeb, no key)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/intel/dark-vessels/sar?aoi=bab-el-mandeb',
@@ -329,7 +329,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.sar.gulf-of-aden',
     group: 'maritime',
-    title: 'Vessels — Sentinel-1 SAR (Gulf of Aden, no key)',
+    title: 'Vessels · Sentinel-1 SAR (Gulf of Aden, no key)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/intel/dark-vessels/sar?aoi=gulf-of-aden',
@@ -344,7 +344,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.sar.suez-gulf-approach',
     group: 'maritime',
-    title: 'Vessels — Sentinel-1 SAR (Suez approach, no key)',
+    title: 'Vessels · Sentinel-1 SAR (Suez approach, no key)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/intel/dark-vessels/sar?aoi=suez-gulf-approach',
@@ -359,7 +359,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.sar.kerch-strait',
     group: 'maritime',
-    title: 'Vessels — Sentinel-1 SAR (Kerch Strait, no key)',
+    title: 'Vessels · Sentinel-1 SAR (Kerch Strait, no key)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/intel/dark-vessels/sar?aoi=kerch-strait',
@@ -374,7 +374,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.sar.taiwan-strait',
     group: 'maritime',
-    title: 'Vessels — Sentinel-1 SAR (Taiwan Strait, no key)',
+    title: 'Vessels · Sentinel-1 SAR (Taiwan Strait, no key)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/intel/dark-vessels/sar?aoi=taiwan-strait',
@@ -391,7 +391,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'news.gdelt.events',
     group: 'news',
-    title: 'GDELT 2.0 — 24h events',
+    title: 'GDELT 2.0 · 24h events',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/events/gdelt?timespan=24h',
@@ -429,7 +429,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'conflict.gdelt.live',
     group: 'conflict',
-    title: 'Conflict — armed events (GDELT, live)',
+    title: 'Conflict · armed events (GDELT, live)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/conflict/live?hours=6',
@@ -447,7 +447,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'intel.incidents.live',
     group: 'conflict',
-    title: 'Signals — fused warnings (areas)',
+    title: 'Signals · fused warnings (areas)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/intel/brief',
@@ -465,7 +465,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'cyber.ioda.outages',
     group: 'cyber',
-    title: 'Internet outages — IODA (areas)',
+    title: 'Internet outages · IODA (areas)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/cyber/ioda/outages?days=7',
@@ -490,7 +490,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
     // its own CustomDataSource; off by default. Data is notional, not a feed.
     id: 'mil.cop.notional',
     group: 'reference',
-    title: 'COP — Notional units (MIL-STD-2525)',
+    title: 'COP · Notional units (MIL-STD-2525)',
     kind: 'geojson',
     auth: 'none',
     endpoint: 'notional://cop',
@@ -505,7 +505,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'space.celestrak.stations',
     group: 'space',
-    title: 'Satellites — Space stations (ISS)',
+    title: 'Satellites · Space stations (ISS)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/space/gp?group=stations&limit=4000',
@@ -520,7 +520,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'space.celestrak.starlink',
     group: 'space',
-    title: 'Satellites — Starlink',
+    title: 'Satellites · Starlink',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/space/gp?group=starlink&limit=4000',
@@ -535,7 +535,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'space.celestrak.gps',
     group: 'space',
-    title: 'Satellites — GPS',
+    title: 'Satellites · GPS',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/space/gp?group=gps-ops&limit=4000',
@@ -550,7 +550,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'space.celestrak.visual',
     group: 'space',
-    title: 'Satellites — Visual (brightest)',
+    title: 'Satellites · Visual (brightest)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/space/gp?group=visual&limit=4000',
@@ -597,7 +597,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'infra.cams.public',
     group: 'infra',
-    title: 'CCTV — public road/weather cams',
+    title: 'CCTV · public road/weather cams',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/cams',
@@ -685,7 +685,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.warnings',
     group: 'maritime',
-    title: 'Naval warnings — NGA broadcast',
+    title: 'Naval warnings · NGA broadcast',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/maritime/warnings',
@@ -703,7 +703,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'conflict.ucdp',
     group: 'conflict',
-    title: 'Conflict — UCDP actor-coded events',
+    title: 'Conflict · UCDP actor-coded events',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/conflict/ucdp',
@@ -770,7 +770,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.gdacs',
     group: 'hazards',
-    title: 'Disaster alerts — GDACS',
+    title: 'Disaster alerts · GDACS',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/hazards/gdacs',
@@ -785,7 +785,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.fireperimeters',
     group: 'hazards',
-    title: 'Wildfire perimeters — NIFC',
+    title: 'Wildfire perimeters · NIFC',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/hazards/fire-perimeters',
@@ -800,7 +800,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.cyclones',
     group: 'hazards',
-    title: 'Tropical cyclones — NHC',
+    title: 'Tropical cyclones · NHC',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/hazards/cyclones',
@@ -815,7 +815,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.volcanoes',
     group: 'hazards',
-    title: 'Volcanoes — Smithsonian GVP',
+    title: 'Volcanoes · Smithsonian GVP',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/hazards/volcanoes',
@@ -830,7 +830,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.radiation',
     group: 'hazards',
-    title: 'Radiation — Safecast',
+    title: 'Radiation · Safecast',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/hazards/radiation',
@@ -845,7 +845,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'hazards.reliefweb',
     group: 'hazards',
-    title: 'Humanitarian disasters — ReliefWeb',
+    title: 'Humanitarian disasters · ReliefWeb',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/hazards/reliefweb',
@@ -860,7 +860,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'env.airquality',
     group: 'env',
-    title: 'Air quality — Open-Meteo',
+    title: 'Air quality · Open-Meteo',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/env/air-quality',
@@ -875,7 +875,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'maritime.buoys',
     group: 'maritime',
-    title: 'Marine buoys — NDBC',
+    title: 'Marine buoys · NDBC',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/maritime/buoys',
@@ -905,7 +905,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'weather.spacewx.aurora',
     group: 'space',
-    title: 'Space weather / aurora — SWPC',
+    title: 'Space weather / aurora · SWPC',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/weather/swpc/space',
@@ -920,7 +920,7 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   {
     id: 'infra.powerplants',
     group: 'infra',
-    title: 'Power plants — WRI (≥500 MW)',
+    title: 'Power plants · WRI (≥500 MW)',
     kind: 'geojson',
     auth: 'none',
     endpoint: '/api/infra/powerplants?min_mw=500',

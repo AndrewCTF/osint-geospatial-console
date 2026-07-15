@@ -94,7 +94,7 @@ export function StoryView(): JSX.Element {
                   <div key={i} className="vn-wrong-item">
                     {w.technique && <span className="vn-tech">{w.technique}</span>}
                     <span className="vn-src">{w.source}</span>
-                    {w.quote && <> — <span className="vn-quote">{w.quote}</span></>}
+                    {w.quote && <>: <span className="vn-quote">{w.quote}</span></>}
                   </div>
                 ))}
                 {story.propaganda_techniques.length > 0 && (
@@ -133,7 +133,7 @@ export function StoryView(): JSX.Element {
 
             {story.supporting_docs.length > 0 && (
               <div className="vn-box facts vn-support">
-                <h4>Supporting documents — live dashboard signals</h4>
+                <h4>Supporting documents: live dashboard signals</h4>
                 {story.supporting_docs.map((d, i) => (
                   d.kind === 'satellite' && d.url ? (
                     <figure key={i} style={{ margin: '8px 0' }}>

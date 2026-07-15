@@ -59,7 +59,7 @@ export function SituationsPanel({ viewer }: Props = {}): JSX.Element {
           viewer={viewer ?? null}
           onPlace={async (lat, lon, label) => {
             const id = await useSituations.getState().create({
-              name: label ? `Situation — ${label}` : 'Situation',
+              name: label ? `Situation · ${label}` : 'Situation',
               centroid: { lat, lon },
             });
             useSelection.getState().select(id);

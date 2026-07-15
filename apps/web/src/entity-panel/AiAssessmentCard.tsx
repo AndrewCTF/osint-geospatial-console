@@ -122,7 +122,7 @@ export function AiAssessmentCard({ id, kind, properties, altM }: Props): JSX.Ele
     })
       .then(async (r) => {
         if (!r.ok) {
-          setErr(`assessment failed (${r.status})`);
+          setErr(`AI assessment unavailable (HTTP ${r.status})`);
           return;
         }
         const resp = (await r.json()) as SelectionBriefResponse;
@@ -131,7 +131,7 @@ export function AiAssessmentCard({ id, kind, properties, altM }: Props): JSX.Ele
       })
       .catch((e: unknown) => {
         if (e instanceof DOMException && e.name === 'AbortError') return;
-        setErr('network error');
+        setErr('Network error. Check your connection.');
       })
       .finally(() => {
         // An aborted request's `.finally` can still fire AFTER the next

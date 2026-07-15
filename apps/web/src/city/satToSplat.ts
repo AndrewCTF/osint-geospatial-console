@@ -59,7 +59,7 @@ export async function stitchSatChip(
   canvas.width = 256 * grid;
   canvas.height = 256 * grid;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('no 2d canvas context');
+  if (!ctx) throw new Error('Could not build the satellite chip: this browser has no 2D canvas support.');
   const draws: Promise<void>[] = [];
   for (let dy = 0; dy < grid; dy++) {
     for (let dx = 0; dx < grid; dx++) {
@@ -79,7 +79,7 @@ export async function stitchSatChip(
   const blob = await new Promise<Blob | null>((res) =>
     canvas.toBlob((b) => res(b), 'image/jpeg', 0.92),
   );
-  if (!blob) throw new Error('canvas encode failed');
+  if (!blob) throw new Error('Could not encode the satellite chip image.');
   return blob;
 }
 
@@ -97,10 +97,10 @@ export async function splatCityFromSat(
   fd.append('mode', 'mapany'); // single-image feed-forward (MapAnything)
   const res = await apiFetch('/api/recon/jobs', { method: 'POST', body: fd });
   if (res.status === 503) {
-    throw new Error('This server has no recon GPU lab — run locally to generate splats.');
+    throw new Error('This server has no recon GPU lab. Run locally to generate splats.');
   }
-  if (!res.ok) throw new Error(`recon job failed: ${res.status}`);
+  if (!res.ok) throw new Error(`Recon job failed to start (HTTP ${res.status}).`);
   const body = (await res.json()) as { job_id?: string };
-  if (!body.job_id) throw new Error('no job_id in response');
+  if (!body.job_id) throw new Error('Recon job did not return a job ID.');
   return body.job_id;
 }

@@ -78,7 +78,7 @@ export const useSituations = create<SituationState>((set, get) => ({
         const list = (await r.json()) as Situation[];
         set({ situations: list, error: null });
       } else {
-        set({ error: r.status === 401 ? 'sign in to load saved situations' : null });
+        set({ error: r.status === 401 ? 'Sign in to load saved situations.' : null });
       }
     } catch {
       /* offline — keep whatever is in memory */
@@ -98,7 +98,7 @@ export const useSituations = create<SituationState>((set, get) => ({
       }));
       return saved.id;
     }
-    set({ error: 'not saved — sign in (kept locally)' });
+    set({ error: 'Not saved. Sign in to persist (kept locally for now).' });
     return sit.id;
   },
   update: async (id, patch) => {
@@ -107,7 +107,7 @@ export const useSituations = create<SituationState>((set, get) => ({
     const next = { ...cur, ...patch };
     set((s) => ({ situations: s.situations.map((x) => (x.id === id ? next : x)) }));
     const saved = await persist(next);
-    if (!saved) set({ error: 'changes not saved — sign in (kept locally)' });
+    if (!saved) set({ error: 'Changes not saved. Sign in to persist (kept locally for now).' });
     else set({ error: null });
   },
   linkChild: async (id, dst, rel = 'contains') => {
@@ -118,7 +118,7 @@ export const useSituations = create<SituationState>((set, get) => ({
         body: JSON.stringify({ dst, rel }),
       });
       if (!r.ok) {
-        set({ error: 'link not saved — sign in' });
+        set({ error: 'Link not saved. Sign in to persist.' });
         return false;
       }
       set({ error: null });

@@ -45,6 +45,9 @@ _COMPUTE_PREFIXES: tuple[str, ...] = (
     "/api/ai/models",     # local model manager: downloads spend disk+bandwidth
     "/api/ai/engine",     # local engine switch (cheap, but gated with the rest)
     "/api/ai/selection",  # selection-inference brief (LLM call per entity click)
+    "/api/workflows",     # op.python exec() + op.http dispatch — actuation, not
+                          # just credits; MUST fail closed on a keyless box so a
+                          # fresh self-host is not an anonymous RCE (see #8 gate).
 )
 
 
@@ -81,14 +84,22 @@ class ComputeRateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[no-untyped-def]
         path = request.url.path
-        if not is_compute_path(path):
+        is_mcp = path == "/mcp" or path.startswith("/mcp/")
+        if not is_mcp and not is_compute_path(path):
             return await call_next(request)
-        limit = get_settings().ratelimit_compute_per_min
+        settings = get_settings()
+        # /mcp gets its own, separately-tunable cap: an agent's tool-call burst
+        # is a different traffic shape than a UI hitting a compute route, and
+        # it must not hammer the rate-limited upstreams the tools proxy.
+        limit = settings.mcp_ratelimit_per_min if is_mcp else settings.ratelimit_compute_per_min
         if limit <= 0:  # limiter disabled
             return await call_next(request)
 
         now = time.monotonic()
-        key = f"{self._client_key(request)}|{path.split('/')[2] if path.count('/') >= 2 else path}"
+        # All /mcp sub-paths share one per-client bucket; compute routes bucket
+        # by their second path segment as before.
+        seg = "mcp" if is_mcp else (path.split("/")[2] if path.count("/") >= 2 else path)
+        key = f"{self._client_key(request)}|{seg}"
         dq = self._hits[key]
         cutoff = now - _WINDOW_S
         while dq and dq[0] < cutoff:

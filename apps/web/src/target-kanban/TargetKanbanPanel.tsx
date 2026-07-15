@@ -189,7 +189,7 @@ export function TargetKanbanPanel({ viewer }: Props = {}): JSX.Element {
       const ok = move(dragId, stage);
       if (!ok) {
         setBlocked(
-          `${STAGE_LABEL[stage]} blocked · confirmation checklist incomplete — open Target detail to complete it or force the move`,
+          `${STAGE_LABEL[stage]} blocked · confirmation checklist incomplete: open Target detail to complete it or force the move`,
         );
         endDrag();
         return;
@@ -534,7 +534,7 @@ function TargetCard({
           {label}
         </span>
         {locked ? (
-          <span className="text-[10px] leading-none shrink-0 text-alert" title="confirmation checklist incomplete — gates the next stage">🔒</span>
+          <span className="text-[10px] leading-none shrink-0 text-alert" title="confirmation checklist incomplete: gates the next stage">🔒</span>
         ) : null}
         <button
           type="button"

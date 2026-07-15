@@ -63,6 +63,43 @@ def test_compute_endpoint_served_when_opted_in(monkeypatch):
             assert r.status_code in (400, 422)
 
 
+# ── #8 workflows are an actuation surface (op.python exec + op.http) ─────────
+# The whole /api/workflows app runs operator-supplied code and dispatches
+# arbitrary HTTP, so it MUST fail closed on a keyless box exactly like the
+# LLM/GPU paths — otherwise a fresh self-host is an anonymous RCE. Unlike
+# /api/ai/local (where only POST is dangerous and GET is a UI status probe),
+# the entire workflows surface is gated: there is no cheap read the keyless
+# product needs from it.
+
+
+def test_workflows_run_fails_closed_when_keyless_and_not_opted_in(monkeypatch):
+    monkeypatch.setattr(
+        auth, "get_settings", lambda: _keyless_settings(allow_unauthenticated=False)
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        # The dangerous path — creating and running op.python — is refused BEFORE
+        # the handler, so no workflow is ever stored or executed.
+        assert c.post("/api/workflows", json={"name": "x", "spec": {}}).status_code == 503
+        r = c.post("/api/workflows/anything/run", json={})
+        assert r.status_code == 503
+        assert "ALLOW_UNAUTHENTICATED" in r.json()["detail"]
+        # A public/keyless data route stays open — the gate is selective.
+        assert c.get("/api/health").status_code == 200
+
+
+def test_workflows_served_when_opted_in(monkeypatch):
+    monkeypatch.setattr(
+        auth, "get_settings", lambda: _keyless_settings(allow_unauthenticated=True)
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        # Opted in → the auth gate lets it through to the real handler (a missing
+        # workflow is a 404, not the auth 503).
+        r = c.post("/api/workflows/anything/run", json={})
+        assert r.status_code != 503
+
+
 # ── POST /api/ai/local write-authority gating parity ────────────────────────
 # POST gained engine/local_only/selection_model write authority alongside its
 # siblings /api/ai/models and /api/ai/selection, but (unlike them) sat outside
@@ -132,6 +169,33 @@ def test_non_compute_path_is_not_rate_limited():
     assert ratelimit.is_compute_path("/api/recon/jobs")
     assert ratelimit.is_compute_path("/api/imagery/detect")
     assert ratelimit.is_compute_path("/api/situations/abc/coa/propose")
+    # Workflows (op.python exec + op.http dispatch) is a compute/actuation path.
+    assert ratelimit.is_compute_path("/api/workflows")
+    assert ratelimit.is_compute_path("/api/workflows/abc/run")
+
+
+def test_mcp_endpoint_is_rate_limited(monkeypatch):
+    """A tool-calling agent must not fan an unbounded burst at /mcp (and through
+    it, the rate-limited upstreams). The limiter sits outside ApiKeyMiddleware,
+    so it caps the flood before auth even runs."""
+    monkeypatch.setattr(
+        ratelimit,
+        "get_settings",
+        lambda: _keyless_settings(mcp_ratelimit_per_min=3),
+    )
+    app = create_app()
+    with TestClient(app) as c:
+        codes = [c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+                 .status_code for _ in range(4)]
+    assert 429 not in codes[:3]  # first 3 pass the limiter
+    assert codes[3] == 429  # 4th over the cap → limiter short-circuits
+
+
+def test_mcp_ratelimit_is_independent_of_compute_cap():
+    # /mcp is throttled on its own knob, not via is_compute_path (which stays the
+    # shared auth/compute predicate and must NOT claim /mcp).
+    assert not ratelimit.is_compute_path("/mcp")
+    assert not ratelimit.is_compute_path("/mcp/messages")
 
 
 def test_recon_active_job_cap_raises_429(monkeypatch):

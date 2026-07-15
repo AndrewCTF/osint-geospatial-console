@@ -90,13 +90,13 @@ function KeyRow({
         body: JSON.stringify({ value: value.trim() }),
       });
       if (!r.ok) {
-        setErr(`save failed (${r.status})`);
+        setErr(`Could not save the key (HTTP ${r.status}).`);
         return;
       }
       setValue('');
       onChanged();
     } catch {
-      setErr('save failed');
+      setErr('Could not save the key.');
     } finally {
       setBusy(false);
     }
@@ -108,12 +108,12 @@ function KeyRow({
     try {
       const r = await apiFetch(`/api/keys/${provider.id}`, { method: 'DELETE' });
       if (!r.ok && r.status !== 204) {
-        setErr(`remove failed (${r.status})`);
+        setErr(`Could not remove the key (HTTP ${r.status}).`);
         return;
       }
       onChanged();
     } catch {
-      setErr('remove failed');
+      setErr('Could not remove the key.');
     } finally {
       setBusy(false);
     }

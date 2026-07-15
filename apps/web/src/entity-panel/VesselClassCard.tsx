@@ -69,7 +69,7 @@ export function VesselClassCard({ lengthM, shipType: _shipType, sogKn }: Props):
       <div className="space-y-2">
         <Caveat
           level="HEURISTIC"
-          note="match by observed weapon/sensor fit — shortlist, not a positive ID"
+          note="match by observed weapon/sensor fit (shortlist, not a positive ID)"
           tone="warn"
         />
         {lengthM ? (
@@ -77,13 +77,13 @@ export function VesselClassCard({ lengthM, shipType: _shipType, sogKn }: Props):
             AIS length {Math.round(lengthM)} m
             {typeof sogKn === 'number' && (
               <span className={sogKn < 1 ? 'text-ok' : 'text-txt-3'}>
-                {' '}· {sogKn < 1 ? 'moored — AIS position stable for cross-check' : `underway ${sogKn.toFixed(0)} kn`}
+                {' '}· {sogKn < 1 ? 'moored (AIS position stable for cross-check)' : `underway ${sogKn.toFixed(0)} kn`}
               </span>
             )}
           </p>
         ) : (
           <p className="mono text-[10px] text-warn">
-            AIS length not broadcast — verify visually (measure hull off the chip), or dark contact
+            AIS length not broadcast. Verify visually (measure hull off the chip), or dark contact.
           </p>
         )}
 
@@ -128,10 +128,10 @@ export function VesselClassCard({ lengthM, shipType: _shipType, sogKn }: Props):
             const v = verifyAgainstAis(matches[0]!.cls, lengthM);
             const headline =
               v.level === 'confirmed'
-                ? `CONFIRMED — ${matches[0]!.cls.name}: visual fit + AIS length agree`
+                ? `CONFIRMED (${matches[0]!.cls.name}): visual fit + AIS length agree`
                 : v.level === 'plausible'
-                  ? `LIKELY — ${matches[0]!.cls.name}: visual fit, AIS length close`
-                  : `⚠ MISMATCH — visual class ≠ AIS length (${v.lenDeltaPct}% off): spoof / mis-ID / decoy?`;
+                  ? `LIKELY (${matches[0]!.cls.name}): visual fit, AIS length close`
+                  : `⚠ MISMATCH: visual class ≠ AIS length (${v.lenDeltaPct}% off). Spoof / mis-ID / decoy?`;
             return (
               <div className="flex items-center gap-1.5 rounded-sm border border-line bg-bg-1/70 px-2 py-1.5">
                 <StatusDot tone={VERDICT_DOT[v.level]} />

@@ -28,7 +28,7 @@ export function AiSetupWizard({ onClose }: { onClose: () => void }): JSX.Element
         const r = await apiFetch('/api/ai/hardware');
         if (!live) return;
         if (!r.ok) {
-          setError(`hardware probe failed (${r.status})`);
+          setError(`Could not probe your hardware (HTTP ${r.status})`);
           return;
         }
         const body = (await r.json()) as HardwareResponse;
@@ -36,7 +36,7 @@ export function AiSetupWizard({ onClose }: { onClose: () => void }): JSX.Element
         setChosen(body.recommendation.preset);
         setStep('preset');
       } catch {
-        if (live) setError('hardware probe unreachable');
+        if (live) setError('Could not reach the hardware probe');
       }
     })();
     return () => {
@@ -61,14 +61,14 @@ export function AiSetupWizard({ onClose }: { onClose: () => void }): JSX.Element
         body: JSON.stringify({ repo_id: preset.repo_id, quant: preset.quant }),
       });
       if (r.status !== 202) {
-        setJobError(`download failed (${r.status})`);
+        setJobError(`Could not start the download (HTTP ${r.status}).`);
         return;
       }
       const body = (await r.json()) as { job_id: string };
       setJobId(body.job_id);
       setStep('download');
     } catch {
-      setJobError('network error');
+      setJobError('Network error. Check your connection.');
     }
   };
 
@@ -94,7 +94,7 @@ export function AiSetupWizard({ onClose }: { onClose: () => void }): JSX.Element
         <div className="px-4 py-3.5 min-h-[180px]">
           {error && (
             <p className="mono text-[11px] text-alert">
-              {error} — you can still set this up later from ⚙ Settings → Local AI.
+              {error}. You can still set this up later from ⚙ Settings → Local AI.
             </p>
           )}
 
@@ -165,7 +165,7 @@ export function AiSetupWizard({ onClose }: { onClose: () => void }): JSX.Element
 
           {!error && step === 'done' && (
             <p className="mono text-[11px] text-txt-1">
-              Model installed. It's now the active main model — you can pin it hot, set up
+              Model installed. It's now the active main model. You can pin it hot, set up
               selection-brief inference, or add more models any time from ⚙ Settings → Local AI.
             </p>
           )}
@@ -220,7 +220,7 @@ function ConfirmStep({
       </div>
       {tight && (
         <p className="mono text-[10px] text-warn">
-          This uses most of your free disk space — consider a smaller quant if the download fails.
+          This uses most of your free disk space; consider a smaller quant if the download fails.
         </p>
       )}
       {error && <p className="mono text-[10px] text-alert">{error}</p>}

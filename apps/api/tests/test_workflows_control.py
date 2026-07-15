@@ -303,6 +303,37 @@ def test_check_url_link_local_allowed_when_explicitly_allowlisted(
     control.check_url("http://169.254.169.254/x")  # operator opted in → allowed
 
 
+def test_check_url_strict_mode_blocks_private_and_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default (BYO) posture: LAN + loopback control servers stay reachable.
+    control.check_url("http://127.0.0.1:9010/command")
+    control.check_url("http://192.168.1.50/command")
+    # Strict mode (publicly-exposed box): the same targets are refused.
+    monkeypatch.setenv("WORKFLOWS_HTTP_BLOCK_PRIVATE", "1")
+    for url in (
+        "http://127.0.0.1:9010/command",
+        "http://192.168.1.50/command",
+        "http://10.0.0.5/x",
+        "http://[::1]/x",
+    ):
+        with pytest.raises(WorkflowError) as exc:
+            control.check_url(url)
+        assert exc.value.status_code == 403
+    # A public host is still fine in strict mode.
+    control.check_url("http://example.com/x")
+
+
+def test_check_url_strict_mode_allowlist_still_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKFLOWS_HTTP_BLOCK_PRIVATE", "1")
+    monkeypatch.setenv("WORKFLOWS_HTTP_ALLOW_HOSTS", "192.168.1.50")
+    control.check_url("http://192.168.1.50/command")  # named internal host → allowed
+    with pytest.raises(WorkflowError):
+        control.check_url("http://192.168.1.99/command")  # a different LAN host → refused
+
+
 def _fake_getaddrinfo(monkeypatch: pytest.MonkeyPatch, mapping: dict[str, str]) -> None:
     """Pin socket.getaddrinfo so a hostname resolves to a chosen IP — models a
     DNS-rebinding server that answered differently at request time."""

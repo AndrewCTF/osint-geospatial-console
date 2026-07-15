@@ -23,7 +23,7 @@ interface ToolDef {
 }
 
 const TOOLS: readonly ToolDef[] = [
-  { id: 'pan', icon: Hand, label: 'Pan', hint: 'Navigate — drag to move, click to select (default)' },
+  { id: 'pan', icon: Hand, label: 'Pan', hint: 'Navigate: drag to move, click to select (default)' },
   { id: 'measure', icon: Ruler, label: 'Measure', hint: 'Click points for a running distance; right-click to finish' },
   { id: 'area', icon: BoxSelect, label: 'Area select', hint: 'Click two corners for a box; search objects inside it' },
   { id: 'annotate', icon: MapPin, label: 'Annotate', hint: 'Click the map to drop labelled markers' },
@@ -288,7 +288,7 @@ export function GlobeToolbar({ viewer }: { viewer: Cesium.Viewer | null }): JSX.
             <button
               key={t.id}
               type="button"
-              title={`${t.label} — ${t.hint}`}
+              title={`${t.label} · ${t.hint}`}
               aria-pressed={on}
               aria-label={t.label}
               onClick={() => setTool(on && t.id !== 'pan' ? 'pan' : t.id)}

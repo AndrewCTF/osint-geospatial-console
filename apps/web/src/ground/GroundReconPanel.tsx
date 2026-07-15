@@ -71,7 +71,7 @@ export function GroundReconPanel({ viewer }: { viewer: unknown }): JSX.Element {
     let cancelled = false;
     setLoading(true);
     apiFetch(`/api/ground/nearby?lat=${aoi.lat}&lon=${aoi.lon}&radius_km=${aoi.radiusKm}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`ground ${r.status}`))))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Ground photos unavailable (HTTP ${r.status})`))))
       .then((fc: { features?: Array<Record<string, unknown>>; note?: string }) => {
         if (cancelled) return;
         const feats: GroundPhotoFeature[] = (fc.features ?? []).map((f) => {
@@ -92,7 +92,7 @@ export function GroundReconPanel({ viewer }: { viewer: unknown }): JSX.Element {
         setPhotos(feats, fc.note ?? null);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'ground failed');
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Ground photos unavailable.');
       });
     return () => {
       cancelled = true;
@@ -240,18 +240,18 @@ function SplatSection(): JSX.Element {
       await Promise.all(
         slice.map(async (p, i) => {
           const r = await apiFetch(p.photo_url);
-          if (!r.ok) throw new Error(`photo ${r.status}`);
+          if (!r.ok) throw new Error(`Could not fetch ground photo (HTTP ${r.status})`);
           const blob = await r.blob();
           fd.append('files', blob, `ground-${i}.jpg`);
         }),
       );
       const r = await apiFetch('/api/recon/jobs', { method: 'POST', body: fd });
-      if (!r.ok) throw new Error(`recon ${r.status}`);
+      if (!r.ok) throw new Error(`Could not start reconstruction (HTTP ${r.status})`);
       const j = (await r.json()) as { job_id?: string };
-      if (!j.job_id) throw new Error('no job_id');
+      if (!j.job_id) throw new Error('Reconstruction did not return a job ID.');
       setJobId(j.job_id);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'recon failed');
+      setErr(e instanceof Error ? e.message : 'Could not start reconstruction.');
       setStage(null);
     }
   };

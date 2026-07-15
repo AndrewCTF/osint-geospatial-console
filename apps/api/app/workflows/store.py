@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS schedules (
 """
 
 
+# Retention: runs accumulate every execution and were previously never pruned
+# (unbounded ``workflows.db`` growth on a long-running self-host). Keep only the
+# newest N terminal runs per workflow — mirrors foundry's ``KEEP_VERSIONS`` /
+# ``monitor_events`` last-200 cap. Pruned on ``finish_run`` (the terminal write).
+RUNS_KEEP_PER_WORKFLOW = 500
+
+
 def _connect(settings: Settings | None = None) -> sqlite3.Connection:
     path = _resolved_db_path(settings)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -300,10 +307,21 @@ class WorkflowStore:
                     " error=?, output_json=? WHERE id=?",
                     (status, now, json.dumps(log), error, json.dumps(output), run_id),
                 )
-                con.commit()
                 row = con.execute(
                     f"SELECT {self._RUN_COLS} FROM runs WHERE id=?", (run_id,)
                 ).fetchone()
+                # Bound runs-table growth: keep only the newest N runs for this
+                # workflow. Runs are the append vector; without this the DB grows
+                # forever on a schedule that fires often.
+                wf_id = row[1] if row else None
+                if wf_id is not None:
+                    con.execute(
+                        "DELETE FROM runs WHERE workflow_id=? AND id NOT IN ("
+                        " SELECT id FROM runs WHERE workflow_id=?"
+                        " ORDER BY started_at DESC, id DESC LIMIT ?)",
+                        (wf_id, wf_id, RUNS_KEEP_PER_WORKFLOW),
+                    )
+                con.commit()
                 return self._run_row(row)
             finally:
                 con.close()

@@ -43,7 +43,7 @@ export function PanoramaViewer(): JSX.Element | null {
     setErr(null);
     try {
       const r = await apiFetch(photo.photo_url);
-      if (!r.ok) throw new Error(`photo fetch ${r.status}`);
+      if (!r.ok) throw new Error(`Could not fetch photo (HTTP ${r.status})`);
       const buf = new Uint8Array(await r.arrayBuffer());
       const out = await detectImage(buf);
       setDetections(`${photo.source}:${photo.photo_id}`, out ?? []);
@@ -60,7 +60,7 @@ export function PanoramaViewer(): JSX.Element | null {
         });
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'detect failed');
+      setErr(e instanceof Error ? e.message : 'Could not run detection.');
     } finally {
       setDetecting(false);
     }
@@ -113,7 +113,7 @@ export function PanoramaViewer(): JSX.Element | null {
             </span>
           ))
         ) : (
-          <MicroLabel>{isDesktop() ? 'no detections yet — run detect' : 'detection needs desktop app'}</MicroLabel>
+          <MicroLabel>{isDesktop() ? 'no detections yet: run detect' : 'detection needs desktop app'}</MicroLabel>
         )}
         {!isDesktop() && <Caveat level="NO CV // WEBSITE" tone="warn" />}
         {err && <span className="mono text-[10px] text-alert">{err}</span>}

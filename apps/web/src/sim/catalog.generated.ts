@@ -206,7 +206,7 @@ export const GENERATED_CATALOG: CatalogItem[] = [
     },
     "sources": [
       "Wikipedia: General Atomics MQ-9 Reaper",
-      "CSIS Defense360 — MQ-9 Reaper",
+      "CSIS Defense360: MQ-9 Reaper",
       "U.S. Air Force Fact Sheet"
     ],
     "notes": "MQ-9A baseline variant (original combat model): 66 ft wingspan, 36 ft length, Honeywell TPE331 900 hp turboprop. Operational ceiling 25,000 ft (7,600 m); max speed 260 kts (~480 kp"
@@ -920,7 +920,7 @@ export const GENERATED_CATALOG: CatalogItem[] = [
       "cost_usd": 300000000
     },
     "sources": [
-      "Wikipedia — Admiral Grigorovich-class frigate",
+      "Wikipedia: Admiral Grigorovich-class frigate",
       "IISS Military Balance 2024",
       "Janes Fighting Ships"
     ],

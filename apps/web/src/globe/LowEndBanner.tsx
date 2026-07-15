@@ -41,7 +41,7 @@ export function LowEndBanner(): JSX.Element | null {
     >
       <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
       <span>
-        Low-end graphics detected — the <span className="text-accent">2D map</span> runs smoother
+        Low-end graphics detected. The <span className="text-accent">2D map</span> runs smoother
         on this device. Or lower <span className="text-txt-0">Settings → Display → quality</span>.
       </span>
       <Link

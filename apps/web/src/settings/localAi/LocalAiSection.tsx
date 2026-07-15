@@ -45,7 +45,7 @@ export function LocalAiSection(): JSX.Element {
         const r = await apiFetch('/api/ai/hardware');
         if (live && r.ok) setHardware((await r.json()) as HardwareResponse);
       } catch {
-        if (live) setError('hardware probe unavailable');
+        if (live) setError('Hardware probe unavailable.');
       }
     })();
     void loadModels();

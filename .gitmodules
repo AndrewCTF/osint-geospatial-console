@@ -1,0 +1,8 @@
+[submodule "apps/ml/fusion/Pi3"]
+	path = apps/ml/fusion/Pi3
+	url = https://github.com/yyfz/Pi3.git
+	shallow = true
+[submodule "apps/ml/fusion/map-anything"]
+	path = apps/ml/fusion/map-anything
+	url = https://github.com/facebookresearch/map-anything.git
+	shallow = true

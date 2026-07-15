@@ -436,7 +436,7 @@ export function InvestigationCanvas(): JSX.Element {
         <p className="mt-2 text-txt-3 text-[11px] leading-snug">
           No investigation open. Select an entity and press{' '}
           <span className="mono text-txt-2">⊹ Search around</span> in its panel to build a
-          multi-hop link graph from the saved ontology — or seed it by name below.
+          multi-hop link graph from the saved ontology, or seed it by name below.
         </p>
         <div className="mt-3">
           <SeedSearch />
@@ -468,7 +468,7 @@ export function InvestigationCanvas(): JSX.Element {
 
       {viewRev !== null && revisions[viewRev] && (
         <div className="mono text-[10px] text-warn leading-snug">
-          viewing revision {viewRev + 1}/{revisions.length} — click{' '}
+          viewing revision {viewRev + 1}/{revisions.length}, click{' '}
           <span className="text-accent">live</span> to return
         </div>
       )}
@@ -609,12 +609,12 @@ function SeedSearch(): JSX.Element {
           useInvestigation.getState().searchAround(entity.id);
           setText('');
         } else if (results.length > 0) {
-          setHint("no aircraft/vessel matched — places can't seed a graph");
+          setHint("no aircraft/vessel matched: places can't seed a graph");
         } else {
-          setHint('no match');
+          setHint('No match found.');
         }
       })
-      .catch(() => setHint('search failed'))
+      .catch(() => setHint('Search failed.'))
       .finally(() => setBusy(false));
   }, [text, busy]);
 
@@ -892,7 +892,7 @@ function GraphView({
       {status === 'unconfigured' && (
         <div className="absolute inset-0 flex items-center justify-center px-4 text-center pointer-events-none">
           <MicroLabel className="block text-warn">
-            ontology store not configured — sign in with a Supabase account to persist + traverse a
+            ontology store not configured: sign in with a Supabase account to persist + traverse a
             graph
           </MicroLabel>
         </div>
@@ -905,7 +905,7 @@ function GraphView({
       {status === 'idle' && objects.size <= 1 && (
         <div className="absolute bottom-2 left-0 right-0 flex justify-center px-4 pointer-events-none">
           <MicroLabel className="block text-center text-txt-3">
-            no saved links yet — flag / nominate / promote this entity (Actions) to grow its graph
+            no saved links yet: flag / nominate / promote this entity (Actions) to grow its graph
           </MicroLabel>
         </div>
       )}

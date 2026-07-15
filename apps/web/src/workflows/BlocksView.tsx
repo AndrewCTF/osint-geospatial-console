@@ -11,10 +11,10 @@ import { EmptyState, ViewHeader } from '../foundry/ui.js';
 // three power blocks — the authoring contract the editor also shows inline.
 
 const GROUPS: Array<{ key: BlockCategory; label: string; hint: string }> = [
-  { key: 'source', label: 'Sources', hint: '0 inputs — pull live platform data into the DAG' },
-  { key: 'op', label: 'Ops', hint: '0-2 inputs — transform, filter, join, compute, or call an external HTTP server' },
-  { key: 'sink', label: 'Sinks', hint: '1 input — act on the result, rows pass through unchanged' },
-  { key: 'control', label: 'Control', hint: '1 input — act on EXTERNAL systems: webhooks, drones, devices via your control server' },
+  { key: 'source', label: 'Sources', hint: '0 inputs. Pulls live platform data into the DAG' },
+  { key: 'op', label: 'Ops', hint: '0-2 inputs. Transforms, filters, joins, computes, or calls an external HTTP server' },
+  { key: 'sink', label: 'Sinks', hint: '1 input. Acts on the result; rows pass through unchanged' },
+  { key: 'control', label: 'Control', hint: '1 input. Acts on EXTERNAL systems: webhooks, drones, devices via your control server' },
 ];
 
 const CONTRACTS: Record<string, { title: string; body: string }> = {
@@ -23,7 +23,7 @@ const CONTRACTS: Record<string, { title: string; body: string }> = {
     body:
       'Define def run(rows: list[dict], memory: dict) -> list[dict] | {"rows": [...], "memory": {...}}. ' +
       'Executes in a resource-limited subprocess on your own machine (CPU/memory/open-file caps, timeout up ' +
-      'to 60s) — BYO-compute, not a hostile-tenant sandbox. A crash or timeout fails the run, never the request.',
+      'to 60s). This is BYO-compute, not a hostile-tenant sandbox. A crash or timeout fails the run, never the request.',
   },
   'op.sql': {
     title: 'SQL contract',
@@ -34,7 +34,7 @@ const CONTRACTS: Record<string, { title: string; body: string }> = {
   'op.llm': {
     title: 'LLM template variables',
     body:
-      '{rows} — input rows as JSON (capped 100 rows / 20KB). {memory} — this workflow’s persisted memory. ' +
+      '{rows}: input rows as JSON (capped 100 rows / 20KB). {memory}: this workflow’s persisted memory. ' +
       'mode=per_batch returns one summary row; mode=per_row processes up to 50 rows individually and adds an ' +
       'llm column (or llm_error on failure) per row.',
   },
@@ -117,7 +117,7 @@ export function BlocksView(): JSX.Element {
 
   return (
     <div className="p-5 space-y-5">
-      <ViewHeader title="Blocks" subtitle="The DAG's typed vocabulary — sources pull data in, ops transform it, sinks act on it." />
+      <ViewHeader title="Blocks" subtitle="The DAG's typed vocabulary: sources pull data in, ops transform it, sinks act on it." />
       {error && <p className="text-[11px] text-alert">{error}</p>}
 
       {blocks.length === 0 && <EmptyState icon={Blocks} title="Loading catalog…" />}

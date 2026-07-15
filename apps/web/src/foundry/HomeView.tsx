@@ -35,7 +35,7 @@ export function HomeView(): JSX.Element {
     setSeedNote(null);
     try {
       const r = await apiFetch('/api/foundry/seed/reference', { method: 'POST' });
-      if (!r.ok) throw new Error(`http ${r.status}`);
+      if (!r.ok) throw new Error(`Reference data seed unavailable (HTTP ${r.status})`);
       const body = (await r.json()) as { results: { dataset: string; status: string }[] };
       const seeded = body.results.filter((x) => x.status === 'seeded').length;
       const exists = body.results.filter((x) => x.status === 'exists').length;
@@ -131,7 +131,7 @@ export function HomeView(): JSX.Element {
             </table>
             {(!summary || summary.recent_builds.length === 0) && (
               <div className="p-4">
-                <EmptyState icon={Hammer} title="No builds yet" hint="Author a transform and run it — builds show up here with row counts and status." />
+                <EmptyState icon={Hammer} title="No builds yet" hint="Author a transform and run it. Builds show up here with row counts and status." />
               </div>
             )}
           </div>
@@ -156,7 +156,7 @@ export function HomeView(): JSX.Element {
           <Widget title="Monitor activity" {...(monitorEvents24h ? { count: monitorEvents24h } : {})}>
             {monitorCount === 0 ? (
               <div className="flex items-center gap-2 text-[11px] text-txt-3">
-                <StatusDot tone="neutral" /> no monitors configured — add one from a dataset&apos;s Monitors tab
+                <StatusDot tone="neutral" /> no monitors configured. Add one from a dataset&apos;s Monitors tab
               </div>
             ) : (
               <button
@@ -175,7 +175,7 @@ export function HomeView(): JSX.Element {
 
           <Widget title="Staleness" {...(staleNodes.length ? { count: staleNodes.length } : {})}>
             {staleNodes.length === 0 ? (
-              <div className="flex items-center gap-2 text-[11px] text-ok"><StatusDot tone="ok" /> pipeline fresh — no stale nodes</div>
+              <div className="flex items-center gap-2 text-[11px] text-ok"><StatusDot tone="ok" /> pipeline fresh (no stale nodes)</div>
             ) : (
               <div className="space-y-1">
                 {staleNodes.slice(0, 8).map((n) => (
@@ -192,7 +192,7 @@ export function HomeView(): JSX.Element {
           <Widget title="Checks">
             {checksFailing > 0 ? (
               <button type="button" onClick={() => navigate('datasets')} className="flex items-center gap-2 text-[11px] text-alert hover:underline">
-                <StatusDot tone="alert" /> {checksFailing} check{checksFailing === 1 ? '' : 's'} failing — review in Datasets
+                <StatusDot tone="alert" /> {checksFailing} check{checksFailing === 1 ? '' : 's'} failing. Review in Datasets
               </button>
             ) : (
               <div className="flex items-center gap-2 text-[11px] text-ok"><StatusDot tone="ok" /> all checks passing</div>

@@ -36,7 +36,7 @@ export function ImageryDiff({ aoi }: { aoi: { lat: number; lon: number } }): JSX
         <Chip date={before} url={chipUrl(aoi.lat, aoi.lon, before)} />
         <Chip date={after} url={chipUrl(aoi.lat, aoi.lon, after)} />
       </div>
-      <Caveat level="NOTIONAL" note="auto-detection illustrative — no model wired" tone="warn" />
+      <Caveat level="NOTIONAL" note="auto-detection illustrative (no model wired)" tone="warn" />
     </div>
   );
 }

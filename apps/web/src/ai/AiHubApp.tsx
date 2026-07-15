@@ -84,7 +84,7 @@ export function AiHubApp({ viewer }: { viewer: Cesium.Viewer | null }): JSX.Elem
           <p className="text-[12px] text-txt-2 max-w-[70ch]">
             Your Watch Officer runs autonomously below; ask the analyst agent for anything
             on-demand; models run on your own GPU. The agents reason over live
-            ADS-B/AIS/SAR/jamming and the fused incident picture — grounded, cited, nothing invented.
+            ADS-B/AIS/SAR/jamming and the fused incident picture: grounded, cited, nothing invented.
           </p>
           <StatusStrip status={status} />
         </header>
@@ -95,7 +95,7 @@ export function AiHubApp({ viewer }: { viewer: Cesium.Viewer | null }): JSX.Elem
         {/* Analyst agent — interactive, on-demand */}
         <CollapsibleSection title="Analyst agent">
           <p className="text-[11px] text-txt-3">
-            Ask a question — the agent runs a real tool-calling loop over the live data, flies the
+            Ask a question. The agent runs a real tool-calling loop over the live data, flies the
             map to what it finds, and cites incident ids. Nothing is invented.
           </p>
           <form

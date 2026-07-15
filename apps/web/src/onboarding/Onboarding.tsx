@@ -48,7 +48,7 @@ const STEPS: Step[] = [
       <>
         Velocity fuses real-time <b className="text-txt-1">ADS-B aircraft</b>,{' '}
         <b className="text-txt-1">AIS vessels</b>, satellites, imagery, ground photos, ACARS
-        and digital OSINT onto one Cesium globe — with a Palantir-Gotham-style analyst
+        and digital OSINT onto one Cesium globe, with a Palantir-Gotham-style analyst
         workflow on top. The core feeds run <span className="text-accent">keyless</span>: open
         it and aircraft, ships, quakes and satellites are already moving.
       </>
@@ -62,7 +62,7 @@ const STEPS: Step[] = [
       <>
         Every aircraft and vessel renders as its <b className="text-txt-1">category icon</b>,
         rotated to real heading. <b className="text-txt-1">Click one</b> to open the inspector
-        on the right — identity, track history, pattern-of-life. The{' '}
+        on the right: identity, track history, pattern-of-life. The{' '}
         <b className="text-txt-1">left rail</b> toggles layers (traffic, maritime, satellites,
         imagery, fires). Drag to Europe or the Gulf to see the density.
       </>
@@ -89,7 +89,7 @@ const STEPS: Step[] = [
     body: (
       <>
         The core is keyless, but <b className="text-txt-1">Settings</b> (top-right) lets you
-        bring your own keys for extras — NASA FIRMS fires, high-res satellite imagery — pick a{' '}
+        bring your own keys for extras (NASA FIRMS fires, high-res satellite imagery), pick a{' '}
         <b className="text-txt-1">dashboard layout</b>, and route AI to a local GPU model. You
         can always re-open this tour from there.
       </>
