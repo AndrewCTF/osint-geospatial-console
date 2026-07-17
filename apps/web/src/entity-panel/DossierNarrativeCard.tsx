@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Widget, Btn, Badge, Caveat } from '../shell/instruments.js';
 import { apiFetch } from '../transport/http.js';
 
@@ -29,6 +29,15 @@ interface Props {
 export function DossierNarrativeCard({ id, kind }: Props): JSX.Element | null {
   const [data, setData] = useState<Narrative | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Reset when the selection changes. This card instance persists across
+  // selections (EntityPanel is toggled by display, never re-keyed), so without
+  // this it would keep showing the previous contact's assessment with the button
+  // reading "↻ Regenerate" — every sibling card already resets on id.
+  useEffect(() => {
+    setData(null);
+    setBusy(false);
+  }, [id, kind]);
 
   // Only aircraft / vessels have a pattern-of-life dossier to narrate.
   if (kind !== 'aircraft' && kind !== 'vessel') return null;
