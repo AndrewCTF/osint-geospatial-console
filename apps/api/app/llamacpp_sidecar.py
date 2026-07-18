@@ -165,8 +165,14 @@ async def ensure_hot(key: str) -> None:
 
 
 async def _load_hot_models() -> None:
+    # Runs in the background (see start): a slow or failed warm for one model must
+    # not abort the rest or leave an unretrieved exception on the fire-and-forget
+    # task. Each model also loads on demand via ensure_hot, so this is best-effort.
     for key in manager.get_hot():
-        await ensure_hot(key)
+        try:
+            await ensure_hot(key)
+        except Exception:  # noqa: BLE001 — warm is best-effort; on-demand load covers it
+            log.warning("hot-model warm failed for %s", key, exc_info=True)
 
 
 async def _hot_poll_loop() -> None:
@@ -297,8 +303,13 @@ async def start() -> None:
                 "llama-server healthy on %s (router mode, models-max=%s)",
                 _host(), settings.llamacpp_models_max,
             )
-            await _load_hot_models()
             _known_hot = set(manager.get_hot())
+            # Warm the pinned models in the BACKGROUND. Awaiting here blocked the
+            # lifespan-awaited start() until every hot model loaded (up to 300s
+            # each, sequential), freezing everything sequenced after it at boot
+            # (adsb start_snapshot, the AIS feeders, the watch loops). They load on
+            # demand via ensure_hot anyway, so the warm is a best-effort optimisation.
+            asyncio.create_task(_load_hot_models())
             _hot_poll_task = asyncio.create_task(_hot_poll_loop())
             return
         await asyncio.sleep(1.0)
