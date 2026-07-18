@@ -27,7 +27,7 @@ const FOLDER_TONE: Record<string, { bg: string; edge: string }> = {
   air: { bg: '#15323f', edge: '#38bdf8' }, // cyan-blue
   maritime: { bg: '#123a32', edge: '#2dd4bf' }, // teal
   space: { bg: '#241f47', edge: '#a78bfa' }, // indigo
-  ground: { bg: '#3a2b14', edge: '#f5b544' }, // bronze (hazard)
+  ground: { bg: '#3d191b', edge: '#ff6b5c' }, // deep hazard red
   signals: { bg: '#3a1d1a', edge: '#f2765b' }, // rust (alert)
   infra: { bg: '#183320', edge: '#4ade80' }, // forest
   reference: { bg: '#232a33', edge: '#94a3b8' }, // slate
