@@ -347,3 +347,28 @@ def test_narrative_cache_is_bounded() -> None:
         assert len(intel._NARRATIVE_CACHE) <= intel._NARRATIVE_CACHE_MAX
     finally:
         intel._NARRATIVE_CACHE.clear()
+
+
+def test_dossier_narrative_bounds_a_stalled_model(monkeypatch) -> None:
+    # A stalled reason-tier backend must not pin the worker past the edge budget:
+    # the route wraps the LLM call in asyncio.wait_for and degrades to "model
+    # unavailable" on timeout. Shrink the budget so the test is fast.
+    import asyncio
+
+    from app.routes import intel
+
+    monkeypatch.setattr(intel, "_NARRATIVE_LLM_BUDGET_S", 0.05)
+
+    async def _hang(*_a: object, **_k: object) -> object:
+        await asyncio.sleep(5)  # longer than the budget → wait_for fires
+        return {}, None
+
+    async def _doss(_bare: str) -> dict:
+        return {"track": [], "id": "x"}
+
+    monkeypatch.setattr(intel.llm, "chat_json", _hang)
+    monkeypatch.setattr(intel.dossier, "vessel_dossier", _doss)
+    intel._NARRATIVE_CACHE.clear()
+
+    out = asyncio.run(intel.intel_dossier_narrative(entity_id="vessel:1"))
+    assert out["ok"] is False and out["error"] == "model unavailable"
