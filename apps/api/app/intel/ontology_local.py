@@ -33,8 +33,6 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
-
-log = logging.getLogger(__name__)
 from app.intel.ontology import (
     Assertion,
     Link,
@@ -43,6 +41,8 @@ from app.intel.ontology import (
     kind_of,
 )
 from app.keys import UserCtx
+
+log = logging.getLogger(__name__)
 
 # ── DB path injection (for tests) ─────────────────────────────────────────────
 
