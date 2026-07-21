@@ -91,8 +91,25 @@ def test_word_boundary_prevents_partial_substring_match(monkeypatch) -> None:
     monkeypatch.setattr(storygeo.places, "ports", lambda: fake_ports)
     # "Adenport" must not match inside an unrelated longer word.
     assert locate_story({"title": "A story about NotAdenportRelated things", "summary": ""}) is None
-    geo = locate_story({"title": "Strike near Adenport terminal", "summary": ""})
+    geo = locate_story({"title": "Strike near Adenport cargo terminal", "summary": ""})
     assert geo is not None and geo["place"] == "Adenport"
+
+
+def test_port_match_requires_maritime_context(monkeypatch) -> None:
+    from app.news import storygeo
+
+    fake_ports = [
+        {"name": "Washington", "lat": 46.6, "lon": -123.8, "wpi": "3"},
+        {"name": "Police", "lat": 53.55, "lon": 14.57, "wpi": "4"},
+    ]
+    monkeypatch.setattr(storygeo.places, "ports", lambda: fake_ports)
+    # WPI holds ordinary city/word names; a story with no maritime vocabulary
+    # must not geo to a harbor it merely shares a name with (real false
+    # positives observed live: a Pentagon story -> "Washington", an India
+    # politics story -> the port "Police").
+    assert locate_story({"title": "Washington budget fight deepens", "summary": "Police cleared the protest."}) is None
+    geo = locate_story({"title": "Washington port workers strike over cargo backlog", "summary": ""})
+    assert geo is not None and geo["place"] == "Washington"
 
 
 async def test_refresh_once_attaches_geo_to_matching_stories(monkeypatch) -> None:

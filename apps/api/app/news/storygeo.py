@@ -84,6 +84,15 @@ def _contains_word(haystack_cf: str, needle: str) -> bool:
     return re.search(r"(?<![a-z0-9])" + re.escape(n) + r"(?![a-z0-9])", haystack_cf) is not None
 
 
+# A port-tier match requires one of these in the story text (word-bounded);
+# the chokepoint/sea tier needs no guard — those names are unambiguous.
+_MARITIME_KEYWORDS = (
+    "tanker", "vessel", "ship", "ships", "shipping", "cargo", "port",
+    "harbour", "harbor", "naval", "navy", "maritime", "strait", "ferry",
+    "container", "freighter", "anchorage", "dock", "seafarer", "coast guard",
+)
+
+
 def _story_text(story: dict) -> str:
     title = story.get("title") or ""
     summary = story.get("summary") or story.get("neutral_summary") or ""
@@ -115,7 +124,12 @@ def locate_story(story: dict) -> dict[str, Any] | None:
             }
 
     # Named seaport (WPI dataset). Skip very short names — too many false
-    # positives ("Nome", "Metu") against ordinary prose.
+    # positives ("Nome", "Metu") against ordinary prose. Port names only count
+    # when the story is actually maritime: WPI names include ordinary city
+    # names ("Washington", "London") and words like "Police" (Montenegro), so
+    # a politics story must not geo to a harbor it merely shares a name with.
+    if not any(_contains_word(text, kw) for kw in _MARITIME_KEYWORDS):
+        return None
     for port in places.ports():
         name = str(port.get("name") or "")
         if len(name) < 5:

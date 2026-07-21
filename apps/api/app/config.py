@@ -275,7 +275,10 @@ class Settings(BaseSettings):
     # the wall-clock budget for the whole ensemble round. "" → unconfigured.
     news_verify_models: str = ""  # NEWS_VERIFY_MODELS
     news_verify_min_models: int = 2  # NEWS_VERIFY_MIN_MODELS
-    news_verify_budget_s: int = 90  # NEWS_VERIFY_BUDGET_S
+    # 300 s: two swapping ~4B verifiers cover ~12 stories in 90 s (measured
+    # 2026-07-21); the stage runs only in the background refresher, so a
+    # larger budget buys coverage, not latency.
+    news_verify_budget_s: int = 300  # NEWS_VERIFY_BUDGET_S
 
     # ── Human-in-the-loop action approval (HITL gate) ──
     # When ON (default), the intel agent's write-back actions become PROPOSALS the
