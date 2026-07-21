@@ -238,3 +238,27 @@
 @media (prefers-reduced-motion: reduce) {
   .vn-media img, .vn-skel, .vn-live::before { transition: none; animation: none; }
 }
+
+/* "From orbit" — a real satellite chip of the story's actual location
+   (apps/api/app/news/storygeo.py). Honest-labeling note is deliberately
+   plain text, not a warning color — it isn't an error, just a disclosure. */
+.vn-orbit-media {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--wash);
+  margin-bottom: 8px;
+}
+.vn-orbit-media img { width: 100%; height: 100%; object-fit: cover; transition: opacity .25s ease; }
+.vn-orbit-note { margin-bottom: 0; font-style: italic; }
+
+/* Hero lead using a chip instead of an outlet image (no image available). */
+.vn-hero-chip { position: relative; }
+.vn-hero-chip .vn-orbit-cap {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  margin: 0; padding: 6px 10px;
+  background: linear-gradient(180deg, transparent, rgba(0,0,0,.72));
+  color: #fff; font-family: var(--mono); font-size: 11px;
+}

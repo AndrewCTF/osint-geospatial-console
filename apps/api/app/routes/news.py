@@ -30,6 +30,7 @@ from app.news import images as news_images
 from app.news import sources as news_sources
 from app.news import store
 from app.news import verify as news_verify
+from app.news.storygeo import locate_story
 
 log = logging.getLogger(__name__)
 
@@ -339,6 +340,19 @@ async def refresh_once() -> dict[str, Any]:
         await news_images.enrich_images(edition.get("stories") or [], limit=_IMAGE_ENRICH_LIMIT)
     except Exception as exc:  # noqa: BLE001 — image enrichment is cosmetic, best-effort
         log.warning("news image enrichment failed: %s", exc)
+
+    try:
+        # Deterministic, no-network location resolution (A8): attach a real
+        # satellite AOI only for stories that name a specific chokepoint/sea/
+        # canal/port. Cheap CPU-only pass over every story in the edition —
+        # most stories get no confident location and no `geo` field at all.
+        for s in edition.get("stories") or []:
+            if isinstance(s, dict):
+                geo = locate_story(s)
+                if geo is not None:
+                    s["geo"] = geo
+    except Exception as exc:  # noqa: BLE001 — geo attach is cosmetic, best-effort
+        log.warning("news story geo resolution failed: %s", exc)
 
     stories = edition.get("stories") or []
     verified_count = sum(

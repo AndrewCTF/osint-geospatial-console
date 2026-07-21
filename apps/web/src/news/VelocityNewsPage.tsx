@@ -7,12 +7,58 @@ import './news.css';
 
 const TICKER_REFRESH_MS = 60_000;
 
+// A story's resolved real-world location (apps/api/app/news/storygeo.py
+// locate_story) — a named chokepoint/sea/canal or seaport found in its own
+// title/summary text. Optional: most stories carry no confident location and
+// get no chip (never a country-centroid guess).
+export interface StoryGeo {
+  lat: number;
+  lon: number;
+  radius_km: number;
+  place: string;
+  method: string;
+}
+
+// The chip endpoint (/api/imagery/chip) is keyless and returns image bytes
+// directly, so a bare <img src> works (same pattern as GroundReconPanel's
+// AreaChip). Date is backdated ~10 days: Sentinel-2 revisit is ~5 days, and
+// "today" often has no pass yet, which would silently fall back to the much
+// coarser GIBS mosaic.
+export function chipUrl(geo: StoryGeo): string {
+  const d = new Date(Date.now() - 10 * 86400_000).toISOString().slice(0, 10);
+  const p = new URLSearchParams({
+    lat: geo.lat.toFixed(4),
+    lon: geo.lon.toFixed(4),
+    radius_km: geo.radius_km.toFixed(1),
+    date: d,
+    source: 'auto',
+  });
+  return `/api/imagery/chip?${p.toString()}`;
+}
+
 function Media({ src, title }: { src: string; title: string }): JSX.Element {
   return (
     <div className="vn-media">
       {src
         ? <img src={src} alt="" loading="lazy" />
         : <div className="vn-media-ph">{(title[0] || 'V').toUpperCase()}</div>}
+    </div>
+  );
+}
+
+// Hero-only: when the lead story has no source image but does have a
+// resolved location, use a real satellite chip of that place instead of the
+// blank placeholder tile. Falls back to the ordinary placeholder on a chip
+// load failure (chip can 404/timeout) — never a broken-image icon.
+function HeroMedia({ story }: { story: Story & { geo?: StoryGeo } }): JSX.Element {
+  const [chipFailed, setChipFailed] = useState(false);
+  if (story.image || !story.geo || chipFailed) {
+    return <Media src={story.image} title={story.title} />;
+  }
+  return (
+    <div className="vn-media vn-hero-chip">
+      <img src={chipUrl(story.geo)} alt="" loading="lazy" onError={() => setChipFailed(true)} />
+      <div className="vn-cap vn-orbit-cap">{story.geo.place} · Sentinel-2 · latest clear pass</div>
     </div>
   );
 }
@@ -298,7 +344,7 @@ export function VelocityNewsPage(): JSX.Element {
         {lead && (
           <section className="vn-hero">
             <Link to={`/news/${lead.id}`} className="vn-hero-lead">
-              <Media src={lead.image} title={lead.title} />
+              <HeroMedia story={lead} />
               <div className="vn-kicker">{lead.category}</div>
               <h1 className="vn-h">{lead.title}</h1>
               <p className="vn-dek">{lead.neutral_summary}</p>
