@@ -272,3 +272,35 @@ def test_verify_stage_is_background_only() -> None:
         if "verify_edition" in text:
             offenders.append(path.name)
     assert not offenders, f"only routes/news.py may reference verify_edition: {offenders}"
+
+
+def test_unmatched_api_path_returns_json_404_not_spa() -> None:
+    # Decision: the SPA static-file fallback (main.py _SPAStaticFiles) is
+    # mounted LAST at "/" so client routes like /2d or /studio 404 into
+    # index.html. That same catch-all once silently 200'd an unwired or
+    # typo'd /api/* route with the HTML shell instead of a JSON 404 -- it
+    # masked the instability router never being include_router'd. An
+    # unmatched /api/ (or /ws/) path must re-raise as a real 404; a
+    # non-api client route must still fall back to index.html 200.
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        api_resp = client.get("/api/definitely-not-a-route")
+        assert api_resp.status_code == 404, (
+            f"unmatched /api/* path must 404, got {api_resp.status_code}"
+        )
+        assert "application/json" in api_resp.headers.get("content-type", ""), (
+            "unmatched /api/* path must return JSON, not the SPA HTML shell"
+        )
+
+        root_resp = client.get("/")
+        assert root_resp.status_code == 200
+        assert "text/html" in root_resp.headers.get("content-type", "")
+
+        client_route_resp = client.get("/client/route")
+        assert client_route_resp.status_code == 200, (
+            "a non-api client route must still SPA-fallback to index.html"
+        )
+        assert "text/html" in client_route_resp.headers.get("content-type", "")
