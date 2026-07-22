@@ -92,6 +92,7 @@ from app.routes import health as health_routes
 from app.routes import history as history_routes
 from app.routes import imagery as imagery_routes
 from app.routes import infra as infra_routes
+from app.routes import instability as instability_routes
 from app.routes import intel as intel_routes
 from app.routes import jamming as jamming_routes
 from app.routes import keys as keys_routes
@@ -305,6 +306,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from app.intel import watch_officer  # noqa: PLC0415
 
             await watch_officer.start()
+            # Country Instability Index: standing loop that scores + persists a
+            # snapshot per country on a 15-min cadence (app/routes/instability.py).
+            # Idles cheaply like the other standing loops above. Torn down below.
+            from app.routes import instability as instability_routes  # noqa: PLC0415
+
+            instability_routes.start_scorer()
             # Scheduled SAR dark-vessel sweep: stands surveillance over the chokepoint
             # AOIs (Sentinel-1, ~6h cadence). No-op without CDSE creds. Torn down below.
             from app.intel import sar_sweep  # noqa: PLC0415
@@ -392,6 +399,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from app.intel import watch_officer  # noqa: PLC0415
 
             await watch_officer.stop()
+            from app.routes import instability as instability_routes  # noqa: PLC0415
+
+            await instability_routes.stop_scorer()
             from app.intel import sar_sweep  # noqa: PLC0415
 
             await sar_sweep.stop()
@@ -503,6 +513,9 @@ def create_app() -> FastAPI:
     app.include_router(nas_status_routes.router)
     app.include_router(climate_routes.router)
     app.include_router(markets_routes.router)
+    # Country Instability Index (CII): scored snapshots + trailing history for
+    # the Country app (app/intel/instability.py + instability_local.py).
+    app.include_router(instability_routes.router)
     app.include_router(entity_routes.router)
     app.include_router(alerts_routes.router)
     app.include_router(tiles_routes.router)
