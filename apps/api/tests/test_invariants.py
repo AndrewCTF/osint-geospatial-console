@@ -166,6 +166,99 @@ def test_news_refresher_persists_after_verify() -> None:
     )
 
 
+# ── Country Instability Index (CII, Phase C) ────────────────────────────────
+
+
+def test_cii_weights_sum_to_one() -> None:
+    # Decision (instability.py module docstring): COMPONENT_WEIGHTS is the
+    # weight table BEFORE any per-country renormalization for missing
+    # sources — it must sum to exactly 1.0 or every score is silently
+    # mis-scaled even in the all-sources-present case.
+    from app.intel.instability import COMPONENT_WEIGHTS
+
+    total = sum(COMPONENT_WEIGHTS.values())
+    assert total == pytest.approx(1.0), f"CII COMPONENT_WEIGHTS sum to {total}, not 1.0"
+
+
+def test_instability_never_imports_a_route_handler() -> None:
+    # Decision: instability.py may only reuse the LIFTED module-level
+    # callables (load_ioda/load_gdacs/load_quakes/advisories_summary/
+    # displacement_summary/market_stress/conflict_events/ucdp_events), never
+    # a route's HTTP handler in-process (the adsb_global() 500 post-mortem
+    # this repo already learned from once).
+    src = (APP / "intel" / "instability.py").read_text()
+    forbidden_handlers = [
+        "ioda_outages",
+        "gdacs(",
+        "quakes(",
+        "advisories(",
+        "displacement(",
+    ]
+    offenders = [name for name in forbidden_handlers if re.search(rf"\b{re.escape(name)}", src)]
+    assert not offenders, f"instability.py must not reference route handlers: {offenders}"
+
+
+def test_instability_score_all_components_carry_inputs() -> None:
+    # Every component dict in a score_all() run must carry an `inputs` key
+    # (the short evidence list — counts/labels, never a full payload) so a
+    # caller can show its work instead of a bare number.
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from app.intel import instability
+
+    async def _fc(*_a, **_k):
+        return {
+            "type": "FeatureCollection",
+            "features": [{"properties": {"iso3": "TST"}} for _ in range(3)],
+        }
+
+    async def _news(*_a, **_k):
+        return {
+            "payload": {
+                "stories": [
+                    {"countries": ["TST"], "verification": {"status": "reviewed"}}
+                ]
+            }
+        }
+
+    async def _advisories(*_a, **_k):
+        return {"TST": 3}
+
+    async def _displacement(*_a, **_k):
+        return {"TST": 5000}
+
+    async def _ioda(*_a, **_k):
+        return {"items": [{"entity": {"type": "country", "code": "ZZ"}}], "unavailable": False}
+
+    async def _stress(*_a, **_k):
+        return {"score": 20.0, "degraded": False}
+
+    import pytest as _pytest
+
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(instability, "conflict_events", _fc)
+        mp.setattr(instability, "ucdp_events", _fc)
+        mp.setattr(instability, "news_latest", _news)
+        mp.setattr(instability, "advisories_summary", _advisories)
+        mp.setattr(instability, "displacement_summary", _displacement)
+        mp.setattr(instability, "load_ioda", _ioda)
+        mp.setattr(instability, "load_gdacs", _fc)
+        mp.setattr(instability, "load_quakes", _fc)
+        mp.setattr(instability, "market_stress", _stress)
+        rows = asyncio.run(instability.score_all())
+    finally:
+        mp.undo()
+
+    assert rows, "expected at least one scored country in this canned run"
+    for row in rows:
+        for component in row["components"]:
+            assert "inputs" in component and component["inputs"], (
+                f"component {component.get('key')} missing non-empty inputs"
+            )
+
+
 def test_verify_stage_is_background_only() -> None:
     # The local-model verifier ensemble is a background-refresher stage, not a
     # request-path dependency — a route calling verify_edition() directly would

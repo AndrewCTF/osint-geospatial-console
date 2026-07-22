@@ -19,19 +19,27 @@ Range = Literal["hour", "day", "week", "month"]
 UPSTREAM = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_{range}.geojson"
 
 
+async def _fetch_quakes(range: Range) -> dict[str, Any]:
+    url = UPSTREAM.format(range=range)
+    r = await get_client().get(url)
+    # A non-JSON 200 (CDN error page / rate-limit body) would raise out of the
+    # cache.get_or_fetch loader and 500 this sacred keyless layer; treat it
+    # like a bad status → 502 so the quakes layer degrades, never crashes.
+    if r.status_code != 200 or "json" not in r.headers.get("content-type", "").lower():
+        raise HTTPException(status_code=502, detail=f"upstream {r.status_code}")
+    data = r.json()
+    # USGS returns FeatureCollection — pass-through.
+    return data  # type: ignore[no-any-return]
+
+
+async def load_quakes(range: Range = "day") -> dict[str, Any]:
+    """Cached USGS quakes fetch — the callable surface for in-process
+    consumers (the instability scorer). Never call the route handler
+    in-process; call this."""
+    ttl = 60.0 if range in ("hour", "day") else 300.0
+    return await cache.get_or_fetch(f"eq:{range}", ttl, lambda: _fetch_quakes(range))
+
+
 @router.get("/api/eq")
 async def quakes(range: Range = Query("day")) -> dict[str, Any]:
-    async def fetch() -> dict[str, Any]:
-        url = UPSTREAM.format(range=range)
-        r = await get_client().get(url)
-        # A non-JSON 200 (CDN error page / rate-limit body) would raise out of the
-        # cache.get_or_fetch loader and 500 this sacred keyless layer; treat it
-        # like a bad status → 502 so the quakes layer degrades, never crashes.
-        if r.status_code != 200 or "json" not in r.headers.get("content-type", "").lower():
-            raise HTTPException(status_code=502, detail=f"upstream {r.status_code}")
-        data = r.json()
-        # USGS returns FeatureCollection — pass-through.
-        return data  # type: ignore[no-any-return]
-
-    ttl = 60.0 if range in ("hour", "day") else 300.0
-    return await cache.get_or_fetch(f"eq:{range}", ttl, fetch)
+    return await load_quakes(range)
