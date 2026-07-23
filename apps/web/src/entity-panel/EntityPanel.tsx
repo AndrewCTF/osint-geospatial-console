@@ -40,6 +40,7 @@ import { PatternOfLifeCard } from './PatternOfLifeCard.js';
 import { DossierNarrativeCard } from './DossierNarrativeCard.js';
 import { AiAssessmentCard } from './AiAssessmentCard.js';
 import { VesselClassCard } from './VesselClassCard.js';
+import { AisGapCard } from './AisGapCard.js';
 import { AirportCard } from './AirportCard.js';
 import { PortCard } from './PortCard.js';
 import { BaseCard } from './BaseCard.js';
@@ -445,6 +446,16 @@ export function EntityPanel({ viewer }: Props = {}): JSX.Element {
         />
       )}
 
+      {snap?.kind === 'vessel' && (
+        <AisGapCard
+          mmsi={
+            typeof snap.properties?.['mmsi'] === 'string' || typeof snap.properties?.['mmsi'] === 'number'
+              ? String(snap.properties['mmsi'])
+              : null
+          }
+        />
+      )}
+
       {enrichment?.kind === 'airport' && (
         <AirportCard enrichment={enrichment as AirportEnrichment} />
       )}
@@ -767,7 +778,10 @@ async function actionErrorText(r: Response): Promise<string> {
 // The tile glyph + colour are resolved from the SAME aircraftStyle/vesselStyle
 // classification the map icon uses, so the panel always matches what's drawn on
 // the globe (no forked category logic). Each vessel/aircraft subtype gets its own
-// glyph; a dark-vessel candidate flips to an alert-red diamond.
+// glyph; darkCandidate flips it to an alert-red diamond. That property means
+// "no static AIS name+type has been broadcast for this contact" — NOT that the
+// vessel went dark / stopped transmitting; a genuine transmission gap is a
+// separate, real thing (see AisGapCard, sourced from the dossier track).
 function isDark(snap: PanelSnapshot | null): boolean {
   return snap?.properties?.['darkCandidate'] === true;
 }
@@ -810,7 +824,7 @@ interface Category {
 }
 function categoryOf(snap: PanelSnapshot | null): Category {
   const p = snap?.properties ?? {};
-  if (isDark(snap)) return { glyph: '◆', color: 'var(--alert)', label: 'dark candidate', tone: 'alert' };
+  if (isDark(snap)) return { glyph: '◆', color: 'var(--alert)', label: 'no static AIS ID', tone: 'alert' };
   if (snap?.kind === 'aircraft') {
     const s = aircraftStyle(p);
     return {
@@ -1498,7 +1512,9 @@ function CorrelationCard({
 
   // Top (newest) match drives the threat hero. Severity sets the tone; only
   // real Alert fields (message / severity / confidence / ruleId) are shown —
-  // no fabricated AIS-gap / SAR-offset numbers.
+  // no fabricated AIS-gap / SAR-offset numbers here. (Real AIS gaps DO exist
+  // and are shown elsewhere: AisGapCard reads track.gaps straight from the
+  // dossier — app/intel/dossier.py _track_stats — never synthesized.)
   const top = matches[0]!;
   const heroTone: 'alert' | 'warn' =
     top.severity === 'critical' || top.severity === 'high' ? 'alert' : 'warn';
