@@ -71,6 +71,16 @@ async def quakes(
     lon: float | None = Query(None, ge=-180.0, le=180.0),
     radius_km: float | None = Query(None, gt=0.0, le=20000.0),
 ) -> dict[str, Any]:
+    given = {"lat": lat, "lon": lon, "radius_km": radius_km}
+    supplied = [k for k, v in given.items() if v is not None]
+    if supplied and len(supplied) < 3:
+        missing = [k for k, v in given.items() if v is None]
+        raise HTTPException(
+            422,
+            "lat, lon, and radius_km must be given together to filter by "
+            f"radius (or all omitted for the global feed); missing: {', '.join(missing)}",
+        )
+
     data = await load_quakes(range)
     if lat is not None and lon is not None and radius_km is not None:
         data = filter_by_radius(data, lat, lon, radius_km)

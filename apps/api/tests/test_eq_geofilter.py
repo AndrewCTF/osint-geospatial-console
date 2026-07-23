@@ -2,8 +2,10 @@
 
 "Quakes near a city" was impossible without client-side filtering; the
 route now filters the (still fully cached) USGS FeatureCollection to a
-radius when lat/lon/radius_km are all supplied. Omitting any of the three
-must leave the passthrough behavior exactly as before.
+radius when lat/lon/radius_km are all supplied. Omitting all three must
+leave the passthrough behavior exactly as before; supplying only some of
+the three is a 422 (a partial filter used to be silently dropped, which
+looked like a real — but empty-of-effect — query to a caller).
 """
 
 from __future__ import annotations
@@ -87,16 +89,21 @@ def test_eq_route_with_geo_params_filters_to_radius(client: TestClient) -> None:
     assert ids == {"near"}, "geo-filtered route must drop the far feature"
 
 
-def test_eq_route_partial_geo_params_ignored(client: TestClient) -> None:
-    """Only lat set (no lon/radius_km) must not attempt a filter."""
-    fc = _fake_feature_collection()
+def test_eq_route_partial_geo_params_reject_422(client: TestClient) -> None:
+    """Only lat set (no lon/radius_km) must 422, not silently return the
+    unfiltered global feed — a fat-fingered param should never look like a
+    real (but empty) query result to an agent caller."""
+    r = client.get("/api/eq?range=day&lat=37.77")
+    assert r.status_code == 422
+    missing = r.json()["detail"].rsplit("missing:", 1)[1]
+    assert "lon" in missing and "radius_km" in missing
 
-    async def fake_get(self: object, url: str, **_: object) -> httpx.Response:
-        return _make_response(fc)
 
-    with patch.object(httpx.AsyncClient, "get", new=fake_get):
-        r = client.get("/api/eq?range=day&lat=37.77")
-    assert r.status_code == 200
-    body = r.json()
-    ids = {f["id"] for f in body["features"]}
-    assert ids == {"near", "far"}, "partial geo params must not filter"
+def test_eq_route_two_of_three_geo_params_reject_422(client: TestClient) -> None:
+    """lat+lon set but radius_km missing must also 422, naming only radius_km
+    as missing (not lat/lon, which were actually supplied)."""
+    r = client.get("/api/eq?range=day&lat=37.77&lon=-122.42")
+    assert r.status_code == 422
+    missing = r.json()["detail"].rsplit("missing:", 1)[1]
+    assert "radius_km" in missing
+    assert "lat" not in missing and "lon" not in missing

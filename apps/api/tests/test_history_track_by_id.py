@@ -123,3 +123,65 @@ def test_route_returns_target_entity_composed_from_kind_and_bare_id(
         assert body2["tracks"][0]["id"] == "vessel:999"
     finally:
         H.override_db_path(None)
+
+
+def test_route_infers_aircraft_kind_from_bare_icao24_shape(
+    client: TestClient, tmp_path: pytest.TempPathFactory
+) -> None:
+    """A bare id with NO kind= at all is accepted when its shape is an
+    unambiguous 6-char ICAO24 hex — the documented "'af351f' with kind="
+    form must also work with kind inferred, not just kind supplied."""
+    db = str(tmp_path / "track_route_infer_aircraft.db")
+    _reset_module(db)
+    try:
+        now = time.time()
+        rows = [("aircraft", "aircraft:1a2b3c", now - 5, 10.0, 50.0, 90.0, "{}")]
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(loop.run_in_executor(None, H._flush_sync, rows))
+        finally:
+            loop.close()
+
+        r = client.get("/api/history/track", params={"id": "1a2b3c"})
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["tracks"]) == 1
+        assert body["tracks"][0]["id"] == "aircraft:1a2b3c"
+    finally:
+        H.override_db_path(None)
+
+
+def test_route_infers_vessel_kind_from_bare_mmsi_shape(
+    client: TestClient, tmp_path: pytest.TempPathFactory
+) -> None:
+    """A bare 9-digit id (MMSI shape) with no kind= is inferred as a vessel."""
+    db = str(tmp_path / "track_route_infer_vessel.db")
+    _reset_module(db)
+    try:
+        now = time.time()
+        rows = [("vessel", "vessel:234567890", now - 5, 20.0, 20.0, 0.0, "{}")]
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(loop.run_in_executor(None, H._flush_sync, rows))
+        finally:
+            loop.close()
+
+        r = client.get("/api/history/track", params={"id": "234567890"})
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["tracks"]) == 1
+        assert body["tracks"][0]["id"] == "vessel:234567890"
+    finally:
+        H.override_db_path(None)
+
+
+def test_route_bare_id_no_kind_ambiguous_shape_is_422(client: TestClient) -> None:
+    """A bare id with no 'kind:' prefix, no kind= param, and a shape that is
+    neither a 6-char ICAO24 hex nor a 9-digit MMSI must 422 with a message
+    naming the missing kind — never a silent empty-but-200 track, which is
+    what used to happen for every bare id with no kind= (the field report's
+    exact repro, id=008de3, is now covered by aircraft-shape inference
+    instead: it's 6 hex chars, so it's no longer ambiguous)."""
+    r = client.get("/api/history/track", params={"id": "not-an-id-1"})
+    assert r.status_code == 422
+    assert "kind" in r.json()["detail"]
