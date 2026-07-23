@@ -50,6 +50,31 @@ async def get_tracks(
     )
 
 
+@router.get("/api/history/track")
+async def get_track_by_id(
+    id: str = Query(..., description="Entity id, e.g. 'aircraft:af351f' or 'af351f' with kind="),
+    kind: str | None = Query(None, description="Prefix for a bare id: 'aircraft' or 'vessel'"),
+    from_ts: float | None = Query(None, description="Unix timestamp (seconds)"),
+    to_ts: float | None = Query(None, description="Unix timestamp (seconds)"),
+    limit: int = Query(5000, ge=1, le=20000),
+) -> dict:
+    """Identity-scoped history: the positions for ONE tail/MMSI over a time
+    window, e.g. "where was this aircraft last Tuesday" — a direct idx_id_t
+    lookup rather than the bbox+time scan behind /api/history/tracks."""
+    now = time.time()
+    t_to = to_ts if to_ts is not None else now
+    t_from = from_ts if from_ts is not None else (now - _DEFAULT_WINDOW_SEC)
+
+    entity_id = id if ":" in id else (f"{kind}:{id}" if kind else id)
+
+    return await history.query_track_by_id(
+        entity_id=entity_id,
+        t_from=t_from,
+        t_to=t_to,
+        limit=limit,
+    )
+
+
 @router.get("/api/history/timeseries")
 async def get_timeseries(
     window_sec: int = Query(3600, ge=300, le=86400, description="Look-back window"),

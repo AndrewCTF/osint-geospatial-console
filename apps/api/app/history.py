@@ -451,6 +451,51 @@ async def query_tracks(
     )
 
 
+def _query_by_id_sync(
+    entity_id: str,
+    t_from: float,
+    t_to: float,
+    limit: int,
+) -> dict[str, Any]:
+    """Execute a single-id range scan via idx_id_t. Called via run_in_executor."""
+    try:
+        con = _connect()
+        rows = con.execute(
+            "SELECT t, lon, lat, track, extra FROM positions "
+            "WHERE id = ? AND t BETWEEN ? AND ? ORDER BY t LIMIT ?",
+            (entity_id, t_from, t_to, limit),
+        ).fetchall()
+        con.close()
+    except Exception as exc:  # noqa: BLE001
+        # Same degraded-vs-empty distinction as _query_sync (issue #16).
+        log.exception("history: query-by-id error")
+        return {"tracks": [], "degraded": True, "error": f"{type(exc).__name__}"}
+
+    kind = entity_id.split(":", 1)[0] if ":" in entity_id else ""
+    points = [[lon, lat, t, track] for t, lon, lat, track, _extra in rows]
+    return {"tracks": [{"id": entity_id, "kind": kind, "points": points}]}
+
+
+async def query_track_by_id(
+    entity_id: str,
+    t_from: float,
+    t_to: float,
+    limit: int = 5000,
+) -> dict[str, Any]:
+    """Return the single track for *entity_id* (e.g. ``aircraft:af351f``) in the
+    given time window — the identity-scoped counterpart to ``query_tracks``'s
+    bbox+time scan, answering "where was this tail/MMSI on date X" directly off
+    the ``idx_id_t`` index instead of a full-window bbox scan.
+
+    Returns the same shape as ``query_tracks`` (a ``tracks`` list), but always
+    with at most one entry, so callers can share a renderer.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, _query_by_id_sync, entity_id, t_from, t_to, limit
+    )
+
+
 # ── metrics-over-time (§8) ──────────────────────────────────────────────────
 
 def _timeseries_sync(bucket_sec: int, t_from: float, t_to: float) -> dict[str, Any]:
