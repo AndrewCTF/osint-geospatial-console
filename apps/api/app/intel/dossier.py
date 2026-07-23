@@ -299,7 +299,7 @@ async def vessel_dossier(mmsi: str) -> dict[str, Any]:
     assessment = "nominal"
     if stats["gap_count"] and stats["profile"] == "loiter-then-dash":
         assessment = (
-            "loiter-then-dash with AIS gaps — consistent with (not proof of) a "
+            "loiter-then-dash with AIS gaps. Consistent with (not proof of) a "
             "shadow-fleet / STS pattern (inferred from track)"
         )
     elif stats["gap_count"]:
