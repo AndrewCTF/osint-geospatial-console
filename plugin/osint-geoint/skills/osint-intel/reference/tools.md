@@ -1,6 +1,6 @@
 # OSINT GEOINT — tool reference
 
-22 tools. All geography is optional and accepted two ways: a **centre**
+41 tools. All geography is optional and accepted two ways: a **centre**
 (`lat`, `lon`, `radius_nm`) or an explicit **bbox** (`min_lon`, `min_lat`,
 `max_lon`, `max_lat`). Omit both for a **global** view. Most tools take
 `detail='short'` (default digest) or `'long'` (full bundle) — see the SKILL.

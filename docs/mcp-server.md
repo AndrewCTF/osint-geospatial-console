@@ -12,7 +12,7 @@ See also [`adsb-aircraft-pipeline.md`](./adsb-aircraft-pipeline.md) for how the
 ## Architecture
 
 ```
-agent ──stdio / http (/mcp)──▶ app.mcp_server (22 tools)
+agent ──stdio / http (/mcp)──▶ app.mcp_server (41 tools)
                           │  httpx
                           ▼
                      /api/intel/*  (app.routes.intel)
@@ -36,7 +36,7 @@ agent ──stdio / http (/mcp)──▶ app.mcp_server (22 tools)
   `anomalies`, `area_intel`. Reads the already-warm in-process snapshot — it
   opens **no** new steady-state upstream fan-out.
 - **`app/routes/intel.py`** — the `/api/intel/*` HTTP surface the MCP drives.
-- **`app/mcp_server.py`** — FastMCP server exposing 22 tools over that HTTP
+- **`app/mcp_server.py`** — FastMCP server exposing 41 tools over that HTTP
   surface (+ the Ollama-backed `deep_analyze`). `build_mcp_mount()` mounts it
   into the FastAPI app at `/mcp` (streamable-HTTP) for the hosted deployment.
 
@@ -81,7 +81,7 @@ or an explicit bbox (`min_lon,min_lat,max_lon,max_lat`).
 
 ## MCP tools
 
-22 tools — a representative table is in the [README](../README.md#mcp-server--query-the-live-console-from-an-ai-agent);
+41 tools — a representative table is in the [README](../README.md#mcp-server--query-the-live-console-from-an-ai-agent);
 run `--list-tools` for the full set. A slice:
 `get_situation`, `focus_area`, `aircraft_density`, `gps_jamming`,
 `query_aircraft`, `lookup_aircraft`, `query_vessels`, `anomalies`,

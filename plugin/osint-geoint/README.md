@@ -4,7 +4,7 @@ Live geospatial intelligence as MCP tools, bundled with an analyst **skill**,
 three **slash commands**, and a **watch-officer agent**. Sweep the planet for a
 few hundred tokens; drill on demand.
 
-- **22 MCP tools** over live ADS-B (aircraft), AIS (vessels), a GPS-jamming
+- **41 MCP tools** over live ADS-B (aircraft), AIS (vessels), a GPS-jamming
   layer, Sentinel-1 SAR dark vessels, geocoded events, and a cross-domain
   incident-fusion engine.
 - **Context-optimised** — every heavy tool takes `detail='short'` (a token-frugal
