@@ -411,6 +411,10 @@ def analyze_track(
             "std": round(spd_std, 2),
         },
         "profile": profile,
+        "profile_basis": (
+            "inferred from track geometry (dwell fraction + net speed), not a "
+            "stated mission"
+        ),
         "anomaly": anomaly,
         "params": {"eps_m": eps_m, "min_samples": min_samples},
         "window_note": (

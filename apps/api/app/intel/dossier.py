@@ -215,6 +215,10 @@ def _track_stats(pts: list[Observation]) -> dict[str, Any]:
         "distance_km": round(dist_km, 1),
         "speed_kn": {"avg": avg_kn, "max": max_kn},
         "profile": profile,
+        "profile_basis": (
+            "inferred from speed/displacement over the observed track, not a "
+            "stated mission"
+        ),
         "gaps": gaps,
         "gap_count": len(gaps),
         "bbox": (
@@ -294,7 +298,10 @@ async def vessel_dossier(mmsi: str) -> dict[str, Any]:
 
     assessment = "nominal"
     if stats["gap_count"] and stats["profile"] == "loiter-then-dash":
-        assessment = "loiter-then-dash with AIS gaps — shadow-fleet / STS pattern"
+        assessment = (
+            "loiter-then-dash with AIS gaps — consistent with (not proof of) a "
+            "shadow-fleet / STS pattern (inferred from track)"
+        )
     elif stats["gap_count"]:
         assessment = f"{stats['gap_count']} AIS gap(s) in the track window"
     if in_incidents:
@@ -368,7 +375,10 @@ async def aircraft_dossier(ident: str) -> dict[str, Any]:
     elif degraded:
         assessment = "GNSS degraded — possible jamming/spoofing footprint"
     if src == "adsb_mil":
-        assessment = "military contact; " + assessment
+        assessment = (
+            "military-tagged source (feed classification, not confirmed "
+            "intent); " + assessment
+        )
     if in_incidents:
         assessment = f"appears in {len(in_incidents)} live incident(s); " + assessment
 
