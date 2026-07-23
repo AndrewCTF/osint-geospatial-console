@@ -185,9 +185,23 @@ async def load_worldbank(iso3u: str, ids: list[str], years: int) -> list[dict[st
                 body = r.json()
             except Exception as e:  # noqa: BLE001 — one bad series never fails the country
                 note = f"{type(e).__name__}: {e}"[:120]
-                return {"id": ind, "unavailable": True, "note": note, "series": []}
+                return {
+                    "id": ind,
+                    "label": manifest.get(ind, {}).get("label", ind),
+                    "unit": manifest.get(ind, {}).get("unit", ""),
+                    "unavailable": True,
+                    "note": note,
+                    "series": [],
+                }
             if not isinstance(body, list) or len(body) < 2 or not isinstance(body[1], list):
-                return {"id": ind, "unavailable": True, "note": "wb: no data", "series": []}
+                return {
+                    "id": ind,
+                    "label": manifest.get(ind, {}).get("label", ind),
+                    "unit": manifest.get(ind, {}).get("unit", ""),
+                    "unavailable": True,
+                    "note": "wb: no data",
+                    "series": [],
+                }
             series = [
                 {"year": p.get("date"), "value": p.get("value")}
                 for p in body[1]
