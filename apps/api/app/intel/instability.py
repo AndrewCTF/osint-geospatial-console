@@ -59,7 +59,6 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from datetime import UTC, datetime
 from typing import Any
 
 from app.geo.adminshapes import country_name_to_iso3
@@ -372,7 +371,16 @@ async def score_all() -> list[dict[str, Any]]:
     for iso3 in sorted(candidates):
         components: list[dict[str, Any]] = []
 
-        def _add_count(key: str, counts: dict[str, float] | None, k: float) -> None:
+        # iso3/components bound as defaults so this closure captures the current
+        # iteration's values (it's invoked immediately below, but the binding
+        # keeps ruff's B023 happy and stays correct if a call is ever deferred).
+        def _add_count(
+            key: str,
+            counts: dict[str, float] | None,
+            k: float,
+            iso3: str = iso3,
+            components: list[dict[str, Any]] = components,
+        ) -> None:
             if counts is None or iso3 not in counts:
                 return
             raw = counts[iso3]

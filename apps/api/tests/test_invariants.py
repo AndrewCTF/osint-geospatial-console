@@ -203,7 +203,6 @@ def test_instability_score_all_components_carry_inputs() -> None:
     # (the short evidence list — counts/labels, never a full payload) so a
     # caller can show its work instead of a bare number.
     import asyncio
-    from unittest.mock import AsyncMock
 
     from app.intel import instability
 

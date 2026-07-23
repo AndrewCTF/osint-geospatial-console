@@ -25,10 +25,9 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.news import analyze as news_analyze
 from app.news import brief as news_brief
-from app.news import history_local
+from app.news import history_local, store
 from app.news import images as news_images
 from app.news import sources as news_sources
-from app.news import store
 from app.news import verify as news_verify
 from app.news.storygeo import locate_story
 
