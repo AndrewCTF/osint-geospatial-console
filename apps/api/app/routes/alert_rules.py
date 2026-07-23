@@ -21,7 +21,7 @@ module is CRUD-only. ``email`` is rejected at creation until a sender exists.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import Settings, get_settings
 from app.keys import UserCtx, _client, _headers, current_user_or_local
@@ -67,6 +67,24 @@ class AlertRuleIn(BaseModel):
     channel: str = "inapp"
     sink_url: str | None = None
     enabled: bool = True
+    # Optional per-identity pin (watch.py::evaluate_rules): when set, the rule
+    # follows THIS aircraft/vessel by identity instead of only gating on
+    # category + AOI, and the AOI geofence is relaxed for the identity match (the
+    # whole point is to keep watching the entity as it leaves the drawn area).
+    icao24: str | None = Field(None, max_length=32)
+    mmsi: str | None = Field(None, max_length=32)
+    callsign: str | None = Field(None, max_length=32)
+
+    @field_validator("icao24", "mmsi", "callsign")
+    @classmethod
+    def _normalize_identity(cls, v: str | None) -> str | None:
+        """Blank → None; everything else lowercased so ``watch.py`` can do a
+        plain case-insensitive equality/substring check with no re-normalizing
+        at match time."""
+        if v is None:
+            return None
+        v = v.strip().lower()
+        return v or None
 
 
 class AlertRule(AlertRuleIn):

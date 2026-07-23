@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS alert_rules (
   sink_url     TEXT,
   enabled      INTEGER NOT NULL DEFAULT 1,
   created_at   TEXT NOT NULL,
+  icao24       TEXT,
+  mmsi         TEXT,
+  callsign     TEXT,
   PRIMARY KEY (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS ix_alert_rules_enabled ON alert_rules(user_id, enabled);
@@ -93,6 +96,20 @@ CREATE INDEX IF NOT EXISTS ix_deliveries_ts ON alert_deliveries(ts DESC);
 """
 
 
+# Identity columns added after the original table shipped (per-identity watch
+# rules); a pre-existing ``alert_rules.db`` on an operator's box needs an
+# explicit ALTER TABLE — ``CREATE TABLE IF NOT EXISTS`` above is a no-op once the
+# table already exists, so it never adds a column to an old file.
+_IDENTITY_COLUMNS = ("icao24", "mmsi", "callsign")
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    have = {row[1] for row in con.execute("PRAGMA table_info(alert_rules)").fetchall()}
+    for col in _IDENTITY_COLUMNS:
+        if col not in have:
+            con.execute(f"ALTER TABLE alert_rules ADD COLUMN {col} TEXT")
+
+
 def _connect(settings: Settings | None = None) -> sqlite3.Connection:
     path = _resolved_db_path(settings)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +117,7 @@ def _connect(settings: Settings | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=5000")
     con.executescript(_SCHEMA)
+    _migrate(con)
     con.commit()
     return con
 
@@ -121,7 +139,7 @@ async def _run(fn: Any) -> Any:
 def _row_to_rule(row: tuple[Any, ...]) -> dict[str, Any]:
     (
         rid, label, lat, lon, radius_nm, kinds, min_severity, channel,
-        sink_url, enabled, created_at,
+        sink_url, enabled, created_at, icao24, mmsi, callsign,
     ) = row
     return {
         "id": rid,
@@ -135,6 +153,9 @@ def _row_to_rule(row: tuple[Any, ...]) -> dict[str, Any]:
         "sink_url": sink_url,
         "enabled": bool(enabled),
         "created_at": created_at,
+        "icao24": icao24,
+        "mmsi": mmsi,
+        "callsign": callsign,
     }
 
 
@@ -152,8 +173,8 @@ async def list_rules(
         try:
             q = (
                 "SELECT id, label, lat, lon, radius_nm, kinds, min_severity,"
-                " channel, sink_url, enabled, created_at FROM alert_rules"
-                " WHERE user_id=?"
+                " channel, sink_url, enabled, created_at, icao24, mmsi,"
+                " callsign FROM alert_rules WHERE user_id=?"
             )
             params: list[Any] = [user_id]
             if enabled_only:
@@ -185,6 +206,9 @@ async def create_rule(
         "sink_url": body.get("sink_url"),
         "enabled": bool(body.get("enabled", True)),
         "created_at": created_at,
+        "icao24": body.get("icao24"),
+        "mmsi": body.get("mmsi"),
+        "callsign": body.get("callsign"),
     }
 
     def _sync() -> None:
@@ -193,12 +217,13 @@ async def create_rule(
             con.execute(
                 "INSERT INTO alert_rules (user_id, id, label, lat, lon,"
                 " radius_nm, kinds, min_severity, channel, sink_url, enabled,"
-                " created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " created_at, icao24, mmsi, callsign)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     user_id, row["id"], row["label"], row["lat"], row["lon"],
                     row["radius_nm"], json.dumps(kinds), row["min_severity"],
                     row["channel"], row["sink_url"], int(row["enabled"]),
-                    created_at,
+                    created_at, row["icao24"], row["mmsi"], row["callsign"],
                 ),
             )
             con.commit()
