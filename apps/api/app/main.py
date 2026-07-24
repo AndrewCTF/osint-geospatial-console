@@ -658,7 +658,16 @@ def create_app() -> FastAPI:
                     return await super().get_response("index.html", scope)
                 raise
 
-    _dist = _Path(__file__).resolve().parents[2] / "web" / "dist"
+    # OSINT_WEB_DIST overrides the built-web location (deploys that put dist
+    # elsewhere, and the invariant tests, which must exercise this mount on CI
+    # runners that never build the web app — without it the mount silently
+    # doesn't install and everything behind it is untested).
+    _dist_override = os.environ.get("OSINT_WEB_DIST")
+    _dist = (
+        _Path(_dist_override)
+        if _dist_override
+        else _Path(__file__).resolve().parents[2] / "web" / "dist"
+    )
     if _dist.is_dir():
         app.mount("/", _SPAStaticFiles(directory=str(_dist), html=True), name="web")
 
