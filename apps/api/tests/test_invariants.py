@@ -273,7 +273,22 @@ def test_verify_stage_is_background_only() -> None:
     assert not offenders, f"only routes/news.py may reference verify_edition: {offenders}"
 
 
-def test_unmatched_api_path_returns_json_404_not_spa() -> None:
+def _spa_app(tmp_path, monkeypatch):
+    """A fresh app with the SPA fallback GUARANTEED mounted: the mount is
+    conditional on a built web dist, which CI's api job never has (master run
+    30101979056 failed exactly this way), so these tests bring their own
+    one-file dist via the OSINT_WEB_DIST override instead of depending on the
+    repo's build state."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>velocity test shell</title>")
+    monkeypatch.setenv("OSINT_WEB_DIST", str(dist))
+    from app.main import create_app
+
+    return create_app()
+
+
+def test_unmatched_api_path_returns_json_404_not_spa(tmp_path, monkeypatch) -> None:
     # Decision: the SPA static-file fallback (main.py _SPAStaticFiles) is
     # mounted LAST at "/" so client routes like /2d or /studio 404 into
     # index.html. That same catch-all once silently 200'd an unwired or
@@ -283,9 +298,7 @@ def test_unmatched_api_path_returns_json_404_not_spa() -> None:
     # non-api client route must still fall back to index.html 200.
     from fastapi.testclient import TestClient
 
-    from app.main import app
-
-    with TestClient(app) as client:
+    with TestClient(_spa_app(tmp_path, monkeypatch)) as client:
         api_resp = client.get("/api/definitely-not-a-route")
         assert api_resp.status_code == 404, (
             f"unmatched /api/* path must 404, got {api_resp.status_code}"
@@ -315,7 +328,7 @@ def test_unmatched_api_path_returns_json_404_not_spa() -> None:
         assert "text/html" in client_route_resp.headers.get("content-type", "")
 
 
-def test_unmatched_ws_upgrade_is_denied_not_500() -> None:
+def test_unmatched_ws_upgrade_is_denied_not_500(tmp_path, monkeypatch) -> None:
     # Decision: a genuine WebSocket-upgrade request to an unmatched /ws/* path
     # falls through to the same SPA static-file mount as the plain-GET case
     # above, but in websocket scope, not http scope. Starlette's StaticFiles
@@ -329,13 +342,10 @@ def test_unmatched_ws_upgrade_is_denied_not_500() -> None:
     from fastapi.testclient import TestClient
     from starlette.testclient import WebSocketDenialResponse
 
-    from app.main import create_app
-
-    # A fresh app instance, not the module-level singleton the sibling test
-    # above uses — its MCP streamable-HTTP session manager can only run()
-    # once per instance, and that test already spends the singleton's one
-    # lifespan cycle.
-    with TestClient(create_app()) as client:
+    # A fresh app instance (the MCP streamable-HTTP session manager can only
+    # run() once per instance) with its own dist via _spa_app — the websocket
+    # denial path only exists when the SPA mount is installed.
+    with TestClient(_spa_app(tmp_path, monkeypatch)) as client:
         with pytest.raises(WebSocketDenialResponse) as exc_info:
             with client.websocket_connect("/ws/definitely-not-a-route"):
                 pass
