@@ -125,6 +125,52 @@ def test_route_returns_target_entity_composed_from_kind_and_bare_id(
         H.override_db_path(None)
 
 
+def test_normalize_id_case_lowercases_icao24_hex_only() -> None:
+    """Pure-function guard for the normalizer: only an ICAO24-hex-shaped
+    value half gets lowercased. MMSI (all digits) is unaffected, and the
+    ``kind`` prefix itself is left exactly as given — a future kind might be
+    case-sensitive."""
+    from app.routes.history import _normalize_id_case
+
+    assert _normalize_id_case("aircraft:AE085B") == "aircraft:ae085b"
+    assert _normalize_id_case("aircraft:ae085b") == "aircraft:ae085b"
+    assert _normalize_id_case("vessel:234567890") == "vessel:234567890"
+    assert _normalize_id_case("Aircraft:AE085B") == "Aircraft:ae085b"
+
+
+def test_route_matches_uppercase_icao24_case_insensitively(
+    client: TestClient, tmp_path: pytest.TempPathFactory
+) -> None:
+    """The position store always writes icao24 hex lowercase, but a spotter
+    types the hex the way most spotting tools display it: uppercase. All
+    three input shapes (bare shape-inferred, kind= + bare, already-prefixed)
+    must match the lowercase-stored row instead of a silent empty result."""
+    db = str(tmp_path / "track_route_uppercase.db")
+    _reset_module(db)
+    try:
+        now = time.time()
+        rows = [("aircraft", "aircraft:ae085b", now - 5, 10.0, 50.0, 90.0, "{}")]
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(loop.run_in_executor(None, H._flush_sync, rows))
+        finally:
+            loop.close()
+
+        r1 = client.get("/api/history/track", params={"id": "AE085B"})
+        assert r1.status_code == 200
+        assert len(r1.json()["tracks"][0]["points"]) == 1
+
+        r2 = client.get("/api/history/track", params={"id": "AE085B", "kind": "aircraft"})
+        assert r2.status_code == 200
+        assert len(r2.json()["tracks"][0]["points"]) == 1
+
+        r3 = client.get("/api/history/track", params={"id": "aircraft:AE085B"})
+        assert r3.status_code == 200
+        assert len(r3.json()["tracks"][0]["points"]) == 1
+    finally:
+        H.override_db_path(None)
+
+
 def test_route_infers_aircraft_kind_from_bare_icao24_shape(
     client: TestClient, tmp_path: pytest.TempPathFactory
 ) -> None:

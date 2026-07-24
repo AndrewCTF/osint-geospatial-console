@@ -30,6 +30,19 @@ def _infer_kind(raw_id: str) -> str | None:
     return None
 
 
+def _normalize_id_case(entity_id: str) -> str:
+    """Lowercase the value half of a ``kind:value`` id when that value is
+    ICAO24-hex shaped — the position store always writes icao24 hex lowercase
+    (app/history.py), so an uppercase/mixed-case hex (the way most spotting
+    tools display it, e.g. 'AE085B') otherwise silently matches nothing.
+    MMSI is all-digits, so this is a no-op for vessels, and the ``kind``
+    prefix itself is left untouched — a future kind might be case-sensitive."""
+    prefix, sep, value = entity_id.partition(":")
+    if sep and ICAO24_RE.match(value):
+        return f"{prefix}:{value.lower()}"
+    return entity_id
+
+
 @router.get("/api/history/tracks")
 async def get_tracks(
     kind: str | None = Query(None, description="Filter by 'aircraft' or 'vessel'"),
@@ -100,6 +113,8 @@ async def get_track_by_id(
                 "'<kind>:<id>' or add kind=aircraft|vessel",
             )
         entity_id = f"{inferred}:{id}"
+
+    entity_id = _normalize_id_case(entity_id)
 
     return await history.query_track_by_id(
         entity_id=entity_id,
