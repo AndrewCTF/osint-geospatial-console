@@ -151,7 +151,7 @@ you had selected. The top bar groups them:
 | **3D** | City 3D | Gaussian-splat city scenes built from a keyless satellite AOI. |
 
 The rest of this README tours the ones you'll live in. Everything below is a
-real screenshot of the current build (v0.9.2), not a mockup.
+real screenshot of the current build (v1.0.1), not a mockup.
 
 ## Take the tour
 
@@ -287,19 +287,32 @@ be annoyed later:
   position-history archive (SQLite at `./data/history.db`), the local ontology
   store — ontology objects, case files, situations (`intel/ontology_local.py`,
   `./data/ontology.db`) — plus separate SQLite files for Foundry, Workflows,
-  alert rules and cached news (`foundry.db`, `workflows.db`, `alert_rules.db`,
-  `news_history.db`), the evidence locker (blobs under `./data/evidence`,
-  custody chain in the ontology store's append-only `assertions` table), a disk
-  tile cache (`./data/tilecache`) and any downloaded local models
-  (`./data/models`). It's several files, not one — back up the whole `./data`
-  volume, not a single DB. Volatile, and cleared on backend restart: the live
-  incident list, transient AOI selections, and generated watch-officer briefs.
-  The Docker Compose volumes mean the durable stores survive `docker compose
-  down`, not just a process restart. The dev compose sets
-  `HISTORY_RETENTION_HOURS=48` (2 days) out of the box; set `ARCHIVE_MODE=1` (the
-  production compose profile does, with a 5 GB starting budget via
-  `HISTORY_DISK_BUDGET_GB`) to size the archive against your disk instead of a
-  fixed time window.
+  alert rules, cached news and the Instability Index scorer (`foundry.db`,
+  `workflows.db`, `alert_rules.db`, `news_history.db`, `instability.db`), and a
+  keyless-local audit log (`audit_log.db` — only materializes when no
+  `SUPABASE_URL` is configured; a keyed deployment writes audit rows to
+  Supabase instead and never creates the file). That's 8 SQLite files, not
+  one — back up the whole `./data` volume, not a single DB. Also durable: the
+  evidence locker (blobs under `./data/evidence`, custody chain in the
+  ontology store's append-only `assertions` table), a disk tile cache
+  (`./data/tilecache`) and any downloaded local models (`./data/models`).
+  Volatile, and cleared on backend restart: the live incident list, transient
+  AOI selections, and generated watch-officer briefs. The Docker Compose
+  volumes mean the durable stores survive `docker compose down`, not just a
+  process restart.
+- **Retention, honestly.** The dev compose sets `HISTORY_RETENTION_HOURS=48`
+  (2 days), but that's a ceiling, not a promise: `HISTORY_MAX_BYTES` (2 GB by
+  default) binds first, and at measured global ADS-B+AIS ingest (~3 GB/h on a
+  keyless box pulling full-breadth feeds) the byte cap fills well before the
+  hour window matters, leaving well under 2 hours of effective depth out of
+  the box — not 48. The hour window only becomes the binding limit once disk
+  is large enough for it to be the tighter cap; a genuine 48h global archive
+  needs on the order of 150 GB (`~3 GB/h * 48h`). Raise `HISTORY_MAX_BYTES`,
+  or set `ARCHIVE_MODE=1` with `HISTORY_DISK_BUDGET_GB` sized to what you're
+  willing to spend on disk (the production compose profile does this, 5 GB to
+  start). The replay scrubber's day-picker and ownership chip show the
+  ACTUAL current depth (`oldest_ts` off `/api/history/coverage`), not the
+  configured ceiling, so you can see what you're really getting.
 - AIS runs keyless and global (~33k vessels, MMSI-deduped across ShipXplorer,
   MyShipTracking, Digitraffic and Kystverket), but coverage is densest over
   Northern Europe and the Baltic and thins out elsewhere; an AISStream key fills
@@ -361,7 +374,7 @@ Protocol** server, so an AI agent can interrogate the same warm feeds the globe
 renders without scraping a dozen sites or flooding its own context. Ask "where
 is GPS being jammed right now?" and it answers from the live feed. Full
 architecture + `/api/intel/*` HTTP reference: [`docs/mcp-server.md`](./docs/mcp-server.md).
-It exposes 41 tools over `app.mcp_server` (a representative slice below; run
+It exposes 46 tools over `app.mcp_server` (a representative slice below; run
 `--list-tools` for the full set):
 
 | Tool | What it returns |

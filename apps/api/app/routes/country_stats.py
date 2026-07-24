@@ -312,9 +312,10 @@ async def country_security(
 ) -> dict[str, Any]:
     """Per-country security picture fused from GDELT conflict, UCDP GED and the
     military installation reference dataset (15 min cache). Country matching is
-    best-effort and each source's caveat rides in ``sources``/``notes`` — GDELT
-    has no country field (heuristic actor-name match), UCDP is token-gated,
-    installation coverage is US-only. Never 500."""
+    best-effort and each source's caveat rides in ``sources``/``notes`` — GDELT's
+    ``properties.iso3`` is a frequently-wrong FIPS geocode, so events are matched
+    by word-boundary CAMEO actor-name instead (``app.intel.gdelt_match``), UCDP
+    is token-gated, installation coverage is US-only. Never 500."""
     row = _resolve_iso3(iso3)
     from app.intel import country_profile as cp
 

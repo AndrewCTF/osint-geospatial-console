@@ -533,7 +533,24 @@ async def count_timeseries(bucket_sec: int, t_from: float, t_to: float) -> dict[
 
 def _coverage_sync(window_hours: int, bucket_hours: int) -> dict[str, Any]:
     """Recording-since / total size / row count / per-bucket fix counts — the
-    real-data source for the replay bar's ownership chip and heat-strip."""
+    real-data source for the replay bar's ownership chip and heat-strip.
+
+    ``oldest_ts`` is the same value as ``recording_since`` (global ``MIN(t)``
+    over ``positions``) under an unambiguous name: "recording_since" reads
+    like a fixed deployment date, but it is recomputed on every scan and
+    marches forward whenever the byte cap or hour-window prune drops the
+    oldest rows — it IS the effective retention floor, not when the app was
+    first started. ``oldest_ts`` is the name callers (the scrubber's "history
+    available from" copy) should reach for; ``recording_since`` stays for
+    back-compat with existing consumers.
+
+    Cost: this is a single indexed lookup, not a table scan — ``EXPLAIN QUERY
+    PLAN`` on the live ~2 GB / ~10-19M-row dev archive reports ``SEARCH
+    positions USING COVERING INDEX idx_t`` (idx_t is created in _connect()
+    above) and measures <1 ms. It rides the same connection this function
+    already opens for row_count/buckets, so exposing it under a second key
+    costs nothing extra — no additional query, no additional scan.
+    """
     path = _resolved_db_path()
     try:
         total_bytes = os.path.getsize(path)
@@ -557,11 +574,13 @@ def _coverage_sync(window_hours: int, bucket_hours: int) -> dict[str, Any]:
         # as _query_sync/_timeseries_sync above).
         log.exception("history: coverage error")
         return {
-            "recording_since": None, "total_bytes": total_bytes, "row_count": 0,
-            "buckets": [], "degraded": True, "error": f"{type(exc).__name__}",
+            "recording_since": None, "oldest_ts": None, "total_bytes": total_bytes,
+            "row_count": 0, "buckets": [], "degraded": True,
+            "error": f"{type(exc).__name__}",
         }
     return {
         "recording_since": recording_since,
+        "oldest_ts": recording_since,
         "total_bytes": total_bytes,
         "row_count": int(row_count),
         "buckets": [{"t": int(bkt), "count": int(n)} for bkt, n in rows],

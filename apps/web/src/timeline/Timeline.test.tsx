@@ -5,7 +5,7 @@
 // short-circuit on `!viewer`), so this exercises the chrome only, not replay
 // playback itself (covered separately by HistoryPlayback.test.ts, Slice 3).
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Timeline } from './Timeline.js';
 
@@ -29,6 +29,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const COVERAGE = {
   recording_since: 1_750_000_000, // 2025-06-15T13:46:40Z
+  oldest_ts: 1_750_000_000, // same instant, unambiguous name
   total_bytes: 2_500_000_000, // 2.3 GB
   row_count: 987_654,
   buckets: [{ t: 1_750_000_000, count: 5 }],
@@ -74,5 +75,50 @@ describe('Timeline — coverage strip + ownership chip', () => {
     expect(await screen.findByRole('img', { name: /history coverage/i })).toBeInTheDocument();
     // Existing day picker is still present and unchanged.
     expect(screen.getByLabelText('Replay a specific day')).toBeInTheDocument();
+  });
+
+  // Regression: history_retention_hours (168h here) bounds the date picker's
+  // min/max, but the store is byte-cap-bound — actual depth (oldest_ts) is
+  // frequently far shorter. Picking a day inside the configured window but
+  // before the real depth used to return an empty replay with no explanation.
+  it('tells the operator the real depth once coverage loads, via the day-picker tooltip', async () => {
+    mockRoutes();
+    render(<Timeline />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Replay a specific day')).toHaveAttribute(
+        'title',
+        expect.stringContaining('history available from 2025-06-15'),
+      );
+    });
+  });
+
+  it('warns visibly when a picked day precedes the actual retained depth', async () => {
+    mockRoutes();
+    render(<Timeline />);
+
+    const dayPicker = await screen.findByLabelText('Replay a specific day');
+    await waitFor(() => {
+      expect(dayPicker).toHaveAttribute('title', expect.stringContaining('history available from'));
+    });
+
+    // Inside the configured 168h/7d window, but before oldest_ts (2025-06-15).
+    fireEvent.change(dayPicker, { target: { value: '2025-06-01' } });
+
+    expect(await screen.findByText(/history available from 2025-06-15/)).toBeInTheDocument();
+  });
+
+  it('shows no depth warning once a picked day is on/after the real depth', async () => {
+    mockRoutes();
+    render(<Timeline />);
+
+    const dayPicker = await screen.findByLabelText('Replay a specific day');
+    await waitFor(() => {
+      expect(dayPicker).toHaveAttribute('title', expect.stringContaining('history available from'));
+    });
+
+    fireEvent.change(dayPicker, { target: { value: '2025-06-16' } });
+
+    expect(screen.queryByText(/history available from 2025-06-15/)).not.toBeInTheDocument();
   });
 });

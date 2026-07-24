@@ -320,6 +320,18 @@ export function Timeline({ viewer }: Props = {}): JSX.Element {
       ? `recording since ${isoDay(coverage.recording_since * 1000)} · ${(coverage.total_bytes / 1024 ** 3).toFixed(1)} GB · ${coverage.row_count.toLocaleString()} fixes`
       : `${retentionDays(retentionHours)} buffer`;
 
+  // Truth vs. configured ceiling: minDay/maxDay above bound the date picker to
+  // the CONFIGURED retention window (history_retention_hours), but the store is
+  // byte-cap-bound — actual depth is frequently far shorter. oldest_ts (the
+  // coverage endpoint's honest floor) tells us the real earliest day with data,
+  // so a day picked inside the configured window but before this can be
+  // explained instead of silently returning an empty replay.
+  const earliestAvailableDay =
+    coverage && coverage.oldest_ts ? isoDay(coverage.oldest_ts * 1000) : null;
+  const replayDayBeforeAvailable = Boolean(
+    replayDay && earliestAvailableDay && replayDay < earliestAvailableDay,
+  );
+
   return (
     <div className="h-full flex flex-col" style={{ padding: '9px 14px', gap: '7px' }}>
       {/* ── Row 1 · transport ──────────────────────────────────────────── */}
@@ -424,9 +436,21 @@ export function Timeline({ viewer }: Props = {}): JSX.Element {
               disabled={replay.active}
               onChange={(e) => setReplayDay(e.target.value)}
               aria-label="Replay a specific day"
-              title={`Replay a specific UTC day (retained back to ${minDay})`}
+              title={
+                earliestAvailableDay
+                  ? `Replay a specific UTC day · history available from ${earliestAvailableDay}`
+                  : `Replay a specific UTC day (retained back to ${minDay})`
+              }
               className="mono text-[10px] tabular-nums px-1.5 py-1 rounded-sm border border-line bg-bg-2 text-txt-1 focus:outline-none focus:border-accent-line disabled:opacity-40 [color-scheme:dark]"
             />
+            {replayDayBeforeAvailable && (
+              <span
+                className="mono text-[10px] text-txt-4"
+                title="The byte cap already pruned positions older than this. Raising HISTORY_MAX_BYTES keeps more history on disk."
+              >
+                history available from {earliestAvailableDay}
+              </span>
+            )}
             {replayDay && !replay.active && (
               <button
                 type="button"
@@ -458,7 +482,11 @@ export function Timeline({ viewer }: Props = {}): JSX.Element {
             )}
             <span
               className="mono text-[10px] uppercase tracking-[0.5px] text-txt-4"
-              title={`Position history is a rolling, size-capped buffer (~${retentionDays(retentionHours)} retained, then oldest fixes drop). Replay older than this is unavailable (no cold storage).`}
+              title={
+                earliestAvailableDay
+                  ? `Position history is a rolling, size-capped buffer. Configured window is ~${retentionDays(retentionHours)}, but actual depth is bound by the byte cap: history available from ${earliestAvailableDay}. Replay older than this is unavailable (no cold storage).`
+                  : `Position history is a rolling, size-capped buffer (~${retentionDays(retentionHours)} retained, then oldest fixes drop). Replay older than this is unavailable (no cold storage).`
+              }
             >
               {ownershipChip}
             </span>
