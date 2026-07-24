@@ -64,15 +64,18 @@ CREATE TABLE IF NOT EXISTS alert_rules (
   user_id      TEXT NOT NULL,
   id           TEXT NOT NULL,
   label        TEXT NOT NULL,
-  lat          REAL NOT NULL,
-  lon          REAL NOT NULL,
-  radius_nm    REAL NOT NULL DEFAULT 50,
+  lat          REAL,
+  lon          REAL,
+  radius_nm    REAL DEFAULT 50,
   kinds        TEXT NOT NULL DEFAULT '[]',
   min_severity INTEGER NOT NULL DEFAULT 1,
   channel      TEXT NOT NULL DEFAULT 'inapp',
   sink_url     TEXT,
   enabled      INTEGER NOT NULL DEFAULT 1,
   created_at   TEXT NOT NULL,
+  icao24       TEXT,
+  mmsi         TEXT,
+  callsign     TEXT,
   PRIMARY KEY (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS ix_alert_rules_enabled ON alert_rules(user_id, enabled);
@@ -93,6 +96,50 @@ CREATE INDEX IF NOT EXISTS ix_deliveries_ts ON alert_deliveries(ts DESC);
 """
 
 
+# Identity columns added after the original table shipped (per-identity watch
+# rules); a pre-existing ``alert_rules.db`` on an operator's box needs an
+# explicit ALTER TABLE — ``CREATE TABLE IF NOT EXISTS`` above is a no-op once the
+# table already exists, so it never adds a column to an old file.
+_IDENTITY_COLUMNS = ("icao24", "mmsi", "callsign")
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    have = {row[1] for row in con.execute("PRAGMA table_info(alert_rules)").fetchall()}
+    for col in _IDENTITY_COLUMNS:
+        if col not in have:
+            con.execute(f"ALTER TABLE alert_rules ADD COLUMN {col} TEXT")
+    _relax_aoi_not_null(con)
+
+
+# An identity-only rule (P6.1: icao24/mmsi/callsign with no AOI) persists NULL
+# lat/lon/radius_nm — a DB file created before that has a NOT NULL constraint
+# on those columns that a plain ALTER TABLE ADD COLUMN can't lift (SQLite has
+# no ALTER COLUMN). Rebuild the table instead: rename it aside, let ``_SCHEMA``
+# recreate the (already-nullable) definition, copy every row across by name,
+# drop the old one. The identity-column migration above must run FIRST so the
+# renamed-aside copy already has icao24/mmsi/callsign for the column list to
+# select. Runs at most once per DB file: after it, ``lat``'s notnull flag is 0,
+# so the next boot's check is a single PRAGMA read.
+_ALERT_RULE_COLUMNS = (
+    "user_id, id, label, lat, lon, radius_nm, kinds, min_severity, channel,"
+    " sink_url, enabled, created_at, icao24, mmsi, callsign"
+)
+
+
+def _relax_aoi_not_null(con: sqlite3.Connection) -> None:
+    info = con.execute("PRAGMA table_info(alert_rules)").fetchall()
+    lat_notnull = next((row[3] for row in info if row[1] == "lat"), 0)
+    if not lat_notnull:
+        return
+    con.execute("ALTER TABLE alert_rules RENAME TO alert_rules_old")
+    con.executescript(_SCHEMA)
+    con.execute(
+        f"INSERT INTO alert_rules ({_ALERT_RULE_COLUMNS})"
+        f" SELECT {_ALERT_RULE_COLUMNS} FROM alert_rules_old"
+    )
+    con.execute("DROP TABLE alert_rules_old")
+
+
 def _connect(settings: Settings | None = None) -> sqlite3.Connection:
     path = _resolved_db_path(settings)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +147,7 @@ def _connect(settings: Settings | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=5000")
     con.executescript(_SCHEMA)
+    _migrate(con)
     con.commit()
     return con
 
@@ -121,7 +169,7 @@ async def _run(fn: Any) -> Any:
 def _row_to_rule(row: tuple[Any, ...]) -> dict[str, Any]:
     (
         rid, label, lat, lon, radius_nm, kinds, min_severity, channel,
-        sink_url, enabled, created_at,
+        sink_url, enabled, created_at, icao24, mmsi, callsign,
     ) = row
     return {
         "id": rid,
@@ -135,6 +183,9 @@ def _row_to_rule(row: tuple[Any, ...]) -> dict[str, Any]:
         "sink_url": sink_url,
         "enabled": bool(enabled),
         "created_at": created_at,
+        "icao24": icao24,
+        "mmsi": mmsi,
+        "callsign": callsign,
     }
 
 
@@ -152,8 +203,8 @@ async def list_rules(
         try:
             q = (
                 "SELECT id, label, lat, lon, radius_nm, kinds, min_severity,"
-                " channel, sink_url, enabled, created_at FROM alert_rules"
-                " WHERE user_id=?"
+                " channel, sink_url, enabled, created_at, icao24, mmsi,"
+                " callsign FROM alert_rules WHERE user_id=?"
             )
             params: list[Any] = [user_id]
             if enabled_only:
@@ -176,15 +227,24 @@ async def create_rule(
     row = {
         "id": rid,
         "label": body["label"],
-        "lat": float(body["lat"]),
-        "lon": float(body["lon"]),
-        "radius_nm": float(body.get("radius_nm", 50)),
+        # An identity-only rule (icao24/mmsi/callsign, no AOI — AlertRuleIn's
+        # model validator guarantees one or the other) carries None here; keep
+        # it None rather than crashing on float(None) or fabricating a 0/50
+        # geofence the evaluator was never told to enforce.
+        "lat": float(body["lat"]) if body.get("lat") is not None else None,
+        "lon": float(body["lon"]) if body.get("lon") is not None else None,
+        "radius_nm": (
+            float(body["radius_nm"]) if body.get("radius_nm") is not None else None
+        ),
         "kinds": kinds,
         "min_severity": int(body.get("min_severity", 1)),
         "channel": body.get("channel") or "inapp",
         "sink_url": body.get("sink_url"),
         "enabled": bool(body.get("enabled", True)),
         "created_at": created_at,
+        "icao24": body.get("icao24"),
+        "mmsi": body.get("mmsi"),
+        "callsign": body.get("callsign"),
     }
 
     def _sync() -> None:
@@ -193,12 +253,13 @@ async def create_rule(
             con.execute(
                 "INSERT INTO alert_rules (user_id, id, label, lat, lon,"
                 " radius_nm, kinds, min_severity, channel, sink_url, enabled,"
-                " created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " created_at, icao24, mmsi, callsign)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     user_id, row["id"], row["label"], row["lat"], row["lon"],
                     row["radius_nm"], json.dumps(kinds), row["min_severity"],
                     row["channel"], row["sink_url"], int(row["enabled"]),
-                    created_at,
+                    created_at, row["icao24"], row["mmsi"], row["callsign"],
                 ),
             )
             con.commit()

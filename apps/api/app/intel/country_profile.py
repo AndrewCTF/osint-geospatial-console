@@ -33,6 +33,7 @@ import asyncio
 import re
 from typing import Any
 
+from app.intel.gdelt_match import actor_matches_country
 from app.upstream import cache, get_client
 
 # Wikidata asks every client to identify itself; anonymous SPARQL bursts are
@@ -46,6 +47,15 @@ _BRIEF_TTL = 600.0  # 10 min
 # Total wall-clock cap on the brief ladder, under Cloudflare's 100 s edge limit —
 # the per-backend timeout_s below bounds each rung, this bounds their sum.
 _BRIEF_LLM_BUDGET_S = 90.0
+# 900 was too tight for the five H2 sections this prompt actually asks for —
+# ``## Recent security events`` alone can carry up to 12 inline-cited events
+# (each citation is a full markdown link), so a live run regularly hit the cap
+# mid-sentence, right before the deterministic Sources footer. 1600 mirrors
+# the budget other multi-part grounded-synthesis prompts use (see
+# ``intel/agent.py``'s ``_SYNTH_SYS`` call) and leaves headroom above the
+# observed section lengths; ``_trim_incomplete_tail`` is a backstop for
+# whatever generation still runs long.
+_BRIEF_MAX_TOKENS = 1600
 
 _MAX_BRANCHES = 12
 _MAX_EVENTS = 25
@@ -259,17 +269,22 @@ async def country_security(
     """Per-country security picture fused from the existing conflict layers +
     military installation reference data (15 min cache).
 
-    Honesty (returned in ``notes``): GDELT conflict features carry no country
-    property, so they are filtered heuristically by whether the country NAME
-    appears in either CAMEO actor — reporting-intensity, not verified ground
-    truth. UCDP GED features carry a ``country`` name property and filter
-    exactly, but the UCDP API is token-gated so the layer is usually empty
-    without ``OSINT_UCDP_TOKEN``. Installations come from the military reference
-    dataset, whose ``country`` field is only populated for US (MIRTA) rows.
+    Honesty (returned in ``notes``): GDELT conflict features do carry a
+    ``properties.iso3`` (FIPS-derived geocode), but it is frequently wrong, so
+    they are filtered instead by a word-boundary match of the country NAME
+    against either CAMEO actor (``app.intel.gdelt_match``) — reporting
+    intensity, not verified ground truth. UCDP GED features carry a
+    ``country`` name property and filter exactly, but the UCDP API is
+    token-gated so the layer is usually empty without ``OSINT_UCDP_TOKEN``.
+    Installations come from the military reference dataset, whose ``country``
+    field is only populated for US (MIRTA) rows.
 
     Shape: ``{iso3, name, counts: {conflict, ucdp, installations}, events:
-    [{label, date, actors, deaths?, lat, lon, source}], sources: {conflict,
-    ucdp, installations: {unavailable?, note?}}, notes: [str, …]}``.
+    [{label, date, actors, deaths?, lat, lon, source, url}], sources: {conflict,
+    ucdp, installations: {unavailable?, note?}}, notes: [str, …]}``. ``url`` is
+    the upstream article/record link when the source carried one (GDELT does;
+    UCDP GED does not today) and ``None`` otherwise — never fabricated, so a
+    caller can footnote a claim only when ``url`` is present.
     """
     from app import places
     from app.intel import conflict as conflict_mod
@@ -291,19 +306,22 @@ async def country_security(
             ucdp_mod.ucdp_events(),
         )
 
-        # --- GDELT: no country prop → heuristic actor-name match, flagged. ---
+        # --- GDELT: properties.iso3 exists but is unreliable → word-boundary
+        # actor-name match instead, flagged. ---
         conflict_feats = conflict_fc.get("features") or []
         c_unavail = bool(conflict_fc.get("unavailable"))
         sources["conflict"] = {
             "unavailable": c_unavail,
             "note": conflict_fc.get("note"),
-            "match": "heuristic actor-name substring (GDELT carries no country field)",
+            "match": "word-boundary actor-name match (GDELT's properties.iso3 is unreliable)",
         }
         conflict_hits = 0
         if name_n:
             for f in conflict_feats:
                 p = f.get("properties") or {}
-                if name_n in _norm(p.get("actor1")) or name_n in _norm(p.get("actor2")):
+                if actor_matches_country(p.get("actor1"), name) or actor_matches_country(
+                    p.get("actor2"), name
+                ):
                     conflict_hits += 1
                     geom = (f.get("geometry") or {}).get("coordinates") or [None, None]
                     events.append(
@@ -314,12 +332,14 @@ async def country_security(
                             "lat": geom[1],
                             "lon": geom[0],
                             "source": "gdelt",
+                            "url": p.get("url"),
                         }
                     )
         notes.append(
-            "GDELT conflict events are matched to this country only by actor "
-            "name (no country field); treat as reporting intensity, not "
-            "verified ground truth."
+            "GDELT conflict events are matched to this country by a "
+            "word-boundary actor-name check (properties.iso3 exists but is "
+            "unreliable); treat as reporting intensity, not verified ground "
+            "truth."
         )
 
         # --- UCDP: exact country-name prop match (empty without a token). ---
@@ -343,6 +363,11 @@ async def country_security(
                         "lat": geom[1],
                         "lon": geom[0],
                         "source": "ucdp",
+                        # UCDP GED carries no per-event article link today; kept
+                        # for shape parity with the GDELT event dict above (and
+                        # in case a future UCDP field supplies one) — never
+                        # fabricated, so this is None in practice.
+                        "url": p.get("url"),
                     }
                 )
         if u_unavail:
@@ -398,9 +423,35 @@ _BRIEF_SYS = (
     "## Recent security events, ## Watch items. Ground EVERY statement ONLY in "
     "the JSON data provided. Do not add outside knowledge, do not speculate, "
     "do not invent names, numbers, or events. Cite figures exactly as given "
-    "(with their units). If a section has no supporting data, say so plainly in "
-    "one line rather than guessing. Keep it tight and factual."
+    "(with their units). Each entry in ``recent_security_events`` may carry a "
+    "``url``: when a claim in ## Recent security events is drawn from an event "
+    "that has one, cite it inline as a Markdown link, e.g. \"...clash reported "
+    "([source](https://example.com/...)).\" Cite ONLY urls that literally appear "
+    "in the data: never construct, guess, or paraphrase a URL, and never cite "
+    "a URL for an event whose ``url`` is null. If a section has no supporting "
+    "data, say so plainly in one line rather than guessing. Keep it tight and "
+    "factual."
 )
+
+
+def _round_wb_value(v: Any) -> Any:
+    """World Bank floats arrive with spurious precision (``21943729.812×10^9``
+    style values, or percentages like ``23.4567891233``) that reads as false
+    accuracy once quoted verbatim in a brief. Round to 4 significant figures;
+    ints and non-numeric values pass through unchanged."""
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        return v
+    if isinstance(v, int):
+        return v
+    if v == 0:
+        return 0.0
+    from math import floor, log10
+
+    digits = 4 - int(floor(log10(abs(v)))) - 1
+    # digits can be negative for large magnitudes (e.g. GDP ~2e13 -> -10), which
+    # round() uses to round to the left of the decimal — that is exactly how we
+    # keep 4 significant figures. Clamping to 0 would defeat the whole function.
+    return round(v, digits)
 
 
 def _wb_digest(wb: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -416,10 +467,90 @@ def _wb_digest(wb: dict[str, Any] | None) -> list[dict[str, Any]]:
                 "indicator": ind.get("label") or ind.get("id"),
                 "unit": ind.get("unit"),
                 "year": latest.get("year"),
-                "value": latest.get("value"),
+                "value": _round_wb_value(latest.get("value")),
             }
         )
     return out
+
+
+_SENTENCE_END_RE = re.compile(r"[.!?][\"'\)\]]*(?=\s|$)")
+
+
+def _has_unclosed_bracket(s: str) -> bool:
+    """``True`` if ``s`` ends with an unmatched ``[`` or ``(`` — e.g. a markdown
+    link (``[label](url``) cut off mid-construct. Loose stack match (a closer
+    of the wrong type is ignored rather than treated as an error) is enough to
+    catch the truncation case without being a real markdown parser."""
+    stack: list[str] = []
+    pairs = {"]": "[", ")": "("}
+    for ch in s:
+        if ch in "([":
+            stack.append(ch)
+        elif ch in pairs and stack and stack[-1] == pairs[ch]:
+            stack.pop()
+    return bool(stack)
+
+
+def _trim_incomplete_tail(text: str) -> str:
+    """Trim a dangling trailing sentence/fragment from model-generated markdown
+    so the deterministic ``## Sources`` section always follows a cleanly
+    terminated body.
+
+    A generation that stops on ``max_tokens`` (or any other mid-stream cutoff)
+    can leave the last sentence unfinished — or worse, cut mid-URL inside a
+    markdown citation link. This walks backward from the end of the text to
+    the last sentence-ending punctuation that is both a real word boundary
+    (not a decimal point or a domain like ``example.com``) and leaves no
+    unclosed ``[`` / ``(`` behind it. Text that already ends cleanly is
+    returned unchanged. Returns ``""`` if no safe cut point exists (or the
+    input is empty) — better to drop the fragment than show broken markdown.
+    """
+    s = text.rstrip()
+    if not s:
+        return s
+    for m in reversed(list(_SENTENCE_END_RE.finditer(s))):
+        candidate = s[: m.end()]
+        if not _has_unclosed_bracket(candidate):
+            return candidate
+    return ""
+
+
+def _sourced_footnotes(events: list[dict[str, Any]]) -> str:
+    """Deterministic ``## Sources`` list built directly from the event data the
+    model was given — never generated by the model itself, so a citation can
+    never be fabricated or point at a URL the data didn't actually carry.
+    Empty string when no event carries a ``url``.
+
+    The GDELT word-boundary-match caveat also rides in ``country_security()``
+    ``notes`` and reaches the model's own prompt context (``data_notes`` in
+    ``country_brief``'s payload), but THIS list is appended after the model's
+    markdown and is never itself reviewed by the model — a citation with a
+    working link reads as verified ground truth to anyone who doesn't click
+    through, so a cited GDELT event gets its own copy of the caveat here."""
+    seen: set[str] = set()
+    lines: list[str] = []
+    has_gdelt = False
+    for e in events:
+        url = e.get("url")
+        if not url or url in seen:
+            continue
+        seen.add(str(url))
+        if e.get("source") == "gdelt":
+            has_gdelt = True
+        label = str(e.get("label") or "event").strip() or "event"
+        date = e.get("date")
+        date_s = f" ({date})" if date else ""
+        lines.append(f"- {label}{date_s} · {url}")
+    if not lines:
+        return ""
+    caveat = (
+        "\n\n_GDELT-sourced items below are matched to this country by "
+        "actor-name text only (reporting intensity, not verified ground "
+        "truth); verify before treating as confirmed._"
+        if has_gdelt
+        else ""
+    )
+    return "\n\n## Sources" + caveat + "\n" + "\n".join(lines)
 
 
 async def country_brief(
@@ -433,7 +564,14 @@ async def country_brief(
 
     Returns ``{ok: True, markdown, backend, model, usage}`` on success, or
     ``{ok: False, reason}`` when no LLM backend answers — never a 500, never a
-    fabricated brief. Cached 10 min per country.
+    fabricated brief. Cached 10 min per country. The model is instructed to
+    inline-cite ``## Recent security events`` claims with the event's own
+    ``url`` when present; a deterministic ``## Sources`` footnote list (built
+    from the same event data, never model-generated) is appended after the
+    model's markdown so a citation can never be fabricated. The model's own
+    text is passed through :func:`_trim_incomplete_tail` first, so a
+    generation that runs into ``max_tokens`` mid-sentence never leaves a
+    dangling fragment directly ahead of that footer.
     """
     from app import llm
 
@@ -461,7 +599,7 @@ async def country_brief(
                         {"role": "user", "content": _json.dumps(payload, ensure_ascii=False)},
                     ],
                     tier="fast",
-                    max_tokens=900,
+                    max_tokens=_BRIEF_MAX_TOKENS,
                     timeout_s=60.0,
                     label="country.brief",
                 ),
@@ -476,11 +614,13 @@ async def country_brief(
                 "iso3": iso3u,
                 "name": name,
             }
+        body = _trim_incomplete_tail(str(res.text or ""))
+        markdown = body + _sourced_footnotes(payload["recent_security_events"])
         return {
             "ok": True,
             "iso3": iso3u,
             "name": name,
-            "markdown": res.text,
+            "markdown": markdown,
             "backend": res.backend,
             "model": res.model,
             "usage": res.usage,

@@ -106,6 +106,37 @@ def test_append_unknown_mode_422(client: TestClient) -> None:
     assert r.status_code == 422
 
 
+def test_query_param_mode_is_rejected_not_silently_ignored(client: TestClient) -> None:
+    """mode is Form-only — a caller who sends ?mode=append in the query
+    string (the natural mistake with requests.post(url, params=..., ...) or
+    curl -G) must get a loud 422, not a silent fall-through to the
+    destructive "snapshot" default that replaces the whole dataset."""
+    ds = _upload_csv(client, "qp_mode", _CSV)
+    v2 = b"id,name,speed,country\n4,delta,9,US\n"
+    files = {"file": ("v2.csv", io.BytesIO(v2), "text/csv")}
+    r = client.post(f"/api/foundry/datasets/{ds['id']}/upload?mode=append", files=files)
+    assert r.status_code == 422, r.text
+    assert "form field" in r.json()["detail"]
+
+    # And the dataset must be untouched — no replace happened.
+    fetched = client.get(f"/api/foundry/datasets/{ds['id']}/rows").json()
+    assert fetched["total"] == 3
+
+
+def test_upload_response_echoes_applied_mode(client: TestClient) -> None:
+    ds = _upload_csv(client, "echo_mode", _CSV)
+    v2 = b"id,name,speed,country\n4,delta,9,US\n"
+
+    files_default = {"file": ("v2.csv", io.BytesIO(v2), "text/csv")}
+    r_default = client.post(f"/api/foundry/datasets/{ds['id']}/upload", files=files_default)
+    assert r_default.status_code == 200, r_default.text
+    assert r_default.json()["mode"] == "snapshot"
+
+    r_append = _upload_version(client, ds["id"], "id,name,speed,country,extra\n5,e,1,US,x\n", mode="append")
+    assert r_append.status_code == 200, r_append.text
+    assert r_append.json()["mode"] == "append"
+
+
 # ── rollback ─────────────────────────────────────────────────────────────────
 
 

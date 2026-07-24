@@ -9,7 +9,9 @@ Two surfaces:
         ip and PERSIST the results as Object/Link rows into the caller's ontology
         (same pattern as ``routes/extract.py``: per-user, ACL-stamped, provenance
         in props, one audit row). The frontend then renders the graph via the
-        existing ``/api/ontology/search-around/{root}``. Requires a signed-in user.
+        existing ``/api/ontology/search-around/{root}``. Signed-in user when
+        Supabase is configured; degrades to the shared local identity on a
+        keyless boot (``current_user_or_local``), same as ontology/situations.
 
 New object ids (canonical ``kind:identifier``, kinds registered in
 ``intel/ontology.py``): ``domain:`` ``ip:`` ``cert:`` ``asn:`` ``service:``
@@ -38,7 +40,7 @@ from pydantic import BaseModel, Field
 from app.audit import audit
 from app.config import get_settings
 from app.intel.ontology import Link, Object, get_registry
-from app.keys import UserCtx, current_user
+from app.keys import UserCtx, current_user_or_local
 from app.osint import connectors as C
 from app.osint.fetch import classify_target
 from app.osint.sources import corp, crypto, infra, netblock, social, threat_feeds
@@ -783,19 +785,29 @@ async def _investigate_company(g: _Graph, name: str) -> dict[str, Any]:
         g.link(pid, root, "officer_of")
         officers += 1
 
-    return {
-        "cik": sec_r.get("cik", ""),
+    screening = {
         "sanctions_matches": sanctioned,
         "opencorporates_matches": oc_r.get("count", 0),
         "officers": officers,
         "aleph_matches": al_r.get("count", 0),
         "wikidata_matches": wd_r.get("count", 0),
     }
+    # These are due-diligence counts, not identity fields: a 0 means "checked,
+    # clean" and is the whole point of a durable screening record, so it must
+    # survive re-opening the case. g.obj()'s dict comprehension drops falsy
+    # values (correct for cik/ticker/sic/etc — an identity field that wasn't
+    # found shouldn't render as a fabricated 0/""), so set these directly on
+    # the already-minted root, bypassing that filter. collected_at (stamped by
+    # g.obj() above) already records when this screening ran — no separate
+    # "screened_at" field needed.
+    g.objs[root].props.update(screening)
+
+    return {"cik": sec_r.get("cik", ""), **screening}
 
 
 @router.post("/investigate", response_model=InvestigateResponse)
 async def investigate(
-    req: InvestigateRequest, ctx: UserCtx = Depends(current_user)
+    req: InvestigateRequest, ctx: UserCtx = Depends(current_user_or_local)
 ) -> InvestigateResponse:
     g = _Graph(ts=time.time())
 
@@ -842,9 +854,14 @@ async def investigate(
 
     reg = get_registry(ctx, get_settings())
     for obj in g.objs.values():
-        await reg.upsert(obj)
+        # Each object's own props already carry the real connector that
+        # collected it (rdap+dns, otx, urlscan, …) — stamp that as the
+        # assertion source instead of falling through to upsert's "analyst"
+        # default, which would mislabel automated collection as a human edit
+        # in case-report footnotes.
+        await reg.upsert(obj, source=obj.props.get("source") or "osint-investigate")
     for lk in g.links.values():
-        await reg.link(lk)
+        await reg.link(lk.model_copy(update={"source": "osint-investigate"}))
 
     await audit(
         ctx, "osint_investigate", kind, root,
@@ -864,7 +881,7 @@ class ReconRequest(BaseModel):
 
 @router.post("/recon", response_model=InvestigateResponse)
 async def recon(
-    req: ReconRequest, ctx: UserCtx = Depends(current_user)
+    req: ReconRequest, ctx: UserCtx = Depends(current_user_or_local)
 ) -> InvestigateResponse:
     """Run a GPL deep-recon tool via the sidecar and persist results into the graph.
 
@@ -911,9 +928,11 @@ async def recon(
 
     reg = get_registry(ctx, s)
     for obj in g.objs.values():
-        await reg.upsert(obj)
+        # Same provenance fix as /investigate: stamp the real connector
+        # ("recon:" + tool) instead of the analyst default.
+        await reg.upsert(obj, source=obj.props.get("source") or "osint-recon")
     for lk in g.links.values():
-        await reg.link(lk)
+        await reg.link(lk.model_copy(update={"source": "osint-recon"}))
     summary = {
         "subdomains": len(data.get("subdomains") or []),
         "ips": len(data.get("ips") or []),

@@ -12,7 +12,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../transport/http.js';
+import { AdvisoryCard } from './AdvisoryCard.js';
 import { BriefCard } from './BriefCard.js';
+import { CountryNewsCard } from './CountryNewsCard.js';
+import { DisplacementCard } from './DisplacementCard.js';
+import { InstabilityCard } from './InstabilityCard.js';
 import { LeadershipCard } from './LeadershipCard.js';
 import { MilitaryCard } from './MilitaryCard.js';
 import { SecurityCard } from './SecurityCard.js';
@@ -249,6 +253,10 @@ export function CountryApp(): JSX.Element {
             <LeadershipCard state={profile} />
             <MilitaryCard profile={profile} wb={wb} />
             <SecurityCard state={security} />
+            <CountryNewsCard iso3={selected.iso3} />
+            <AdvisoryCard iso3={selected.iso3} />
+            <DisplacementCard iso3={selected.iso3} />
+            <InstabilityCard iso3={selected.iso3} />
             {/* key= so an in-flight generation aborts + state resets on switch */}
             <BriefCard key={selected.iso3} iso3={selected.iso3} />
             <WorldBankSection state={wb} />

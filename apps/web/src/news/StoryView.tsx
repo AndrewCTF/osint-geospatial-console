@@ -3,7 +3,35 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { apiFetch, backendUrl } from '../transport/http.js';
 import type { Edition, Story } from './types.js';
+import { chipUrl, STATUS_LABEL, STATUS_TONE, type StoryGeo } from './VelocityNewsPage.js';
 import './news.css';
+
+// "From orbit": a real satellite chip of the place the story is actually
+// about (apps/api/app/news/storygeo.py locate_story), never the moment of
+// the story itself — the caption always says so. Hides itself entirely on a
+// load failure (chip can 404/timeout) rather than show a broken image icon.
+function OrbitChip({ geo }: { geo: StoryGeo }): JSX.Element | null {
+  const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading');
+  if (state === 'error') return null;
+  return (
+    <div className="vn-box facts vn-orbit">
+      <h4>From orbit</h4>
+      <div className={`vn-media vn-orbit-media${state === 'loading' ? ' vn-skel' : ''}`}>
+        <img
+          src={chipUrl(geo)}
+          alt=""
+          style={state === 'loading' ? { opacity: 0 } : undefined}
+          onLoad={() => setState('ok')}
+          onError={() => setState('error')}
+        />
+      </div>
+      <div className="vn-cap">{geo.place} · Sentinel-2 · latest clear pass</div>
+      <div className="vn-cap vn-orbit-note">
+        Most recent clear satellite pass of this location, not the moment of the story.
+      </div>
+    </div>
+  );
+}
 
 function highlight(text: string, quotes: string[]): (string | JSX.Element)[] {
   // Wrap each loaded quote found in the rewrite with a highlight span.
@@ -25,7 +53,7 @@ function highlight(text: string, quotes: string[]): (string | JSX.Element)[] {
 
 export function StoryView(): JSX.Element {
   const { id } = useParams();
-  const [story, setStory] = useState<Story | null>(null);
+  const [story, setStory] = useState<(Story & { geo?: StoryGeo }) | null>(null);
   const [missing, setMissing] = useState(false);
 
   useEffect(() => {
@@ -69,12 +97,28 @@ export function StoryView(): JSX.Element {
               </span>
               <span className="vn-corr">{n} {n === 1 ? 'source corroborating' : 'sources corroborating'}</span>
               {story.confidence > 0 && <span>confidence {story.confidence.toFixed(2)}</span>}
+              {story.verification?.status && (
+                <span className={`vn-badge-chip vn-badge-${STATUS_TONE[story.verification.status] ?? 'neutral'}`}>
+                  {STATUS_LABEL[story.verification.status] ?? story.verification.status}
+                </span>
+              )}
             </div>
+
+            {story.bias_review?.original && (
+              <details className="vn-orig">
+                <summary>Originally: {story.bias_review.original.title || 'headline revised after review'}</summary>
+                {story.bias_review.original.neutral_summary && (
+                  <p className="vn-cap">{story.bias_review.original.neutral_summary}</p>
+                )}
+              </details>
+            )}
 
             {story.image && (
               <div className="vn-media vn-lead-media"><img src={story.image} alt="" /></div>
             )}
             {story.image && <div className="vn-cap">Lead image via source outlet</div>}
+
+            {story.geo && <OrbitChip geo={story.geo} />}
 
             <div className="vn-body">
               {(story.neutral_rewrite || story.neutral_summary).split(/\n{2,}/).map((para, i) => (

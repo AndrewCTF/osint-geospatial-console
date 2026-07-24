@@ -185,9 +185,23 @@ async def load_worldbank(iso3u: str, ids: list[str], years: int) -> list[dict[st
                 body = r.json()
             except Exception as e:  # noqa: BLE001 — one bad series never fails the country
                 note = f"{type(e).__name__}: {e}"[:120]
-                return {"id": ind, "unavailable": True, "note": note, "series": []}
+                return {
+                    "id": ind,
+                    "label": manifest.get(ind, {}).get("label", ind),
+                    "unit": manifest.get(ind, {}).get("unit", ""),
+                    "unavailable": True,
+                    "note": note,
+                    "series": [],
+                }
             if not isinstance(body, list) or len(body) < 2 or not isinstance(body[1], list):
-                return {"id": ind, "unavailable": True, "note": "wb: no data", "series": []}
+                return {
+                    "id": ind,
+                    "label": manifest.get(ind, {}).get("label", ind),
+                    "unit": manifest.get(ind, {}).get("unit", ""),
+                    "unavailable": True,
+                    "note": "wb: no data",
+                    "series": [],
+                }
             series = [
                 {"year": p.get("date"), "value": p.get("value")}
                 for p in body[1]
@@ -298,9 +312,10 @@ async def country_security(
 ) -> dict[str, Any]:
     """Per-country security picture fused from GDELT conflict, UCDP GED and the
     military installation reference dataset (15 min cache). Country matching is
-    best-effort and each source's caveat rides in ``sources``/``notes`` — GDELT
-    has no country field (heuristic actor-name match), UCDP is token-gated,
-    installation coverage is US-only. Never 500."""
+    best-effort and each source's caveat rides in ``sources``/``notes`` — GDELT's
+    ``properties.iso3`` is a frequently-wrong FIPS geocode, so events are matched
+    by word-boundary CAMEO actor-name instead (``app.intel.gdelt_match``), UCDP
+    is token-gated, installation coverage is US-only. Never 500."""
     row = _resolve_iso3(iso3)
     from app.intel import country_profile as cp
 

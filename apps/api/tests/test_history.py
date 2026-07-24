@@ -575,6 +575,10 @@ async def test_coverage_shape_and_totals(tmp_path: pytest.TempPathFactory) -> No
     assert result["total_bytes"] > 0
     assert result["row_count"] == 3
     assert sum(b["count"] for b in result["buckets"]) == result["row_count"]
+    # oldest_ts is the unambiguous alias of recording_since (both = global
+    # MIN(t)): the oldest seeded row is cov2 at now - 7200.
+    assert result["oldest_ts"] == result["recording_since"]
+    assert abs(result["oldest_ts"] - (now - 7200)) < 1.0
 
 
 @pytest.mark.asyncio
@@ -657,9 +661,36 @@ def test_coverage_route_returns_expected_keys(
         r = client.get("/api/history/coverage")
         assert r.status_code == 200
         body = r.json()
-        assert set(body.keys()) >= {"recording_since", "total_bytes", "row_count", "buckets"}
+        assert set(body.keys()) >= {
+            "recording_since", "oldest_ts", "total_bytes", "row_count", "buckets",
+        }
     finally:
         H.override_db_path(None)
+
+
+@pytest.mark.asyncio
+async def test_coverage_oldest_ts_is_index_served(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """oldest_ts (global MIN(t)) must hit idx_t rather than scanning the table —
+    the PERF constraint behind exposing it for free alongside recording_since.
+    Regression guard for the EXPLAIN QUERY PLAN evidence gathered against the
+    live dev archive (SEARCH ... USING COVERING INDEX idx_t, <1ms on ~10-19M
+    rows): if a future schema change drops idx_t or reshapes the query so
+    SQLite can no longer answer MIN(t) from the index alone, this fails loud
+    instead of silently turning coverage() into a full scan."""
+    db = str(tmp_path / "explain.db")
+    _reset_module(db)
+    con = H._connect()  # creates schema + idx_t
+    try:
+        plan = con.execute("EXPLAIN QUERY PLAN SELECT MIN(t) FROM positions").fetchall()
+    finally:
+        con.close()
+    plan_text = " ".join(str(cell) for row in plan for cell in row)
+    assert "idx_t" in plan_text, f"MIN(t) must be index-served via idx_t, got: {plan_text}"
+    assert "SCAN TABLE positions" not in plan_text, (
+        f"MIN(t) must not fall back to a full table scan, got: {plan_text}"
+    )
 
 
 def test_encode_decode_extra_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:

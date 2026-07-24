@@ -745,6 +745,35 @@ The current baseline lives in `CLAUDE.md` (Environment facts) and stays a
 three-line fact there. One line per wave, newest first — when the CLAUDE.md
 number changes, the displaced line lands here.
 
+- **1916 +2 skip → 1972 +2 skip** — 2026-07-24, worldmonitor-gaps-2026-07:
+  persona waves 2+3 (`docs/user-feedback-personas-wave2-2026-07.md`). Wave 2
+  re-ran the seven personas against the fix wave and its 15 confirmed findings
+  became 13 commits (ws-upgrade 404, GDELT word-boundary matcher + weight
+  clamp + citation caveats, keyless standing detections, identity-only alert
+  rules with NULL AOI, eq/track param strictness, dossier effective-window
+  honesty, brief truncation, screening persistence + keyless local audit log,
+  5 new MCP tools = 46, retention truth incl. `/api/history/coverage
+  oldest_ts`, ruff backlog cleared). Wave 3 ran 10 personas (3 new: SOC,
+  NGO ops, data engineer) whose 22 confirmed findings yielded 7 same-night
+  fixes (connector provenance on investigate/recon persistence, ontology
+  Properties fallback in the graph inspector, workflows source.quakes loader
+  swap, foundry query-param mode 422, case-insensitive track ids, 90s brief
+  copy, measured sidecar RAM in README) and a ranked 16-item handoff queue in
+  the report. Verdicts across the study arc: adopt 4/7 → 6/10, recommend
+  6/7 → 10/10.
+- **1750 +1 skip → 1916 +2 skip** — 2026-07-23, worldmonitor-gaps-2026-07:
+  persona-fix-wave. Turned the seven-persona feedback study
+  (`docs/user-feedback-personas-2026-07.md`) into fixes: identity-scoped
+  history (`GET /api/history/track`), keyless investigate/recon, wired the
+  Country Instability Index router+scorer, real JSON 404 for unmatched
+  `/api` and `/ws`, honest dark-candidate/inference labels, per-identity
+  (icao24/mmsi/callsign) watch rules, an alert-rule creation UI, country-brief
+  citations + source-URL passthrough + a country news card, `/api/eq` radius
+  filter, and a README truth-pass (dropped the dead demo link, corrected RAM,
+  storage and MCP-tool-count claims). Eight sonnet packages, each adversarially
+  reviewed; six review findings (a dark-candidate mislabel regression, a
+  self-defeating WB-rounding clamp, an em-dash copy slip, a 503-copy bug,
+  missing AOI validation, a /ws test gap) fixed as follow-ups.
 - **1750 +1 skip** — 2026-07-18, overnight-hardening-2026-07-18: overnight
   bug-hunt wave. Four audit rounds (security/backend/frontend, then
   ontology/foundry/collab/recon/imagery, then alerts/correlate/weather + FE

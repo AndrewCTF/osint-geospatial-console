@@ -53,6 +53,7 @@ from app.ratelimit import ComputeRateLimitMiddleware
 from app.routes import acars as acars_routes
 from app.routes import actions as actions_routes
 from app.routes import adsb as adsb_routes
+from app.routes import advisories as advisories_routes
 from app.routes import ai as ai_routes
 from app.routes import ai_models as ai_models_routes
 from app.routes import ai_selection as ai_selection_routes
@@ -65,6 +66,7 @@ from app.routes import audit as audit_routes
 from app.routes import aviation as aviation_routes
 from app.routes import cables as cables_routes
 from app.routes import cams as cams_routes
+from app.routes import climate as climate_routes
 from app.routes import collab as collab_routes
 from app.routes import config as config_routes
 from app.routes import conflict as conflict_routes
@@ -72,6 +74,7 @@ from app.routes import correlations as correlations_routes
 from app.routes import countries as countries_routes
 from app.routes import country_stats as country_stats_routes
 from app.routes import cyber as cyber_routes
+from app.routes import displacement as displacement_routes
 from app.routes import entity as entity_routes
 from app.routes import env as env_routes
 from app.routes import eq as eq_routes
@@ -89,11 +92,14 @@ from app.routes import health as health_routes
 from app.routes import history as history_routes
 from app.routes import imagery as imagery_routes
 from app.routes import infra as infra_routes
+from app.routes import instability as instability_routes
 from app.routes import intel as intel_routes
 from app.routes import jamming as jamming_routes
 from app.routes import keys as keys_routes
 from app.routes import maps as maps_routes
 from app.routes import maritime as maritime_routes
+from app.routes import markets as markets_routes
+from app.routes import nas_status as nas_status_routes
 from app.routes import news as news_routes_mod
 from app.routes import oceans as oceans_routes
 from app.routes import ontology as ontology_routes
@@ -300,6 +306,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from app.intel import watch_officer  # noqa: PLC0415
 
             await watch_officer.start()
+            # Country Instability Index: standing loop that scores + persists a
+            # snapshot per country on a 15-min cadence (app/routes/instability.py).
+            # Idles cheaply like the other standing loops above. Torn down below.
+            from app.routes import instability as instability_routes  # noqa: PLC0415
+
+            instability_routes.start_scorer()
             # Scheduled SAR dark-vessel sweep: stands surveillance over the chokepoint
             # AOIs (Sentinel-1, ~6h cadence). No-op without CDSE creds. Torn down below.
             from app.intel import sar_sweep  # noqa: PLC0415
@@ -387,6 +399,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from app.intel import watch_officer  # noqa: PLC0415
 
             await watch_officer.stop()
+            from app.routes import instability as instability_routes  # noqa: PLC0415
+
+            await instability_routes.stop_scorer()
             from app.intel import sar_sweep  # noqa: PLC0415
 
             await sar_sweep.stop()
@@ -490,6 +505,17 @@ def create_app() -> FastAPI:
     app.include_router(spacewx_routes.router)
     app.include_router(infra_routes.router)
     app.include_router(airhazards_routes.router)
+    # 2026-07-21 context+markets wave: travel advisories, displacement, FAA NAS
+    # ground-stop status, conflict-zone climate anomalies, and market snapshots
+    # (see docs/decisions.md worldmonitor-gaps entries).
+    app.include_router(advisories_routes.router)
+    app.include_router(displacement_routes.router)
+    app.include_router(nas_status_routes.router)
+    app.include_router(climate_routes.router)
+    app.include_router(markets_routes.router)
+    # Country Instability Index (CII): scored snapshots + trailing history for
+    # the Country app (app/intel/instability.py + instability_local.py).
+    app.include_router(instability_routes.router)
     app.include_router(entity_routes.router)
     app.include_router(alerts_routes.router)
     app.include_router(tiles_routes.router)
@@ -593,12 +619,42 @@ def create_app() -> FastAPI:
 
     class _SPAStaticFiles(StaticFiles):
         # SPA fallback: client-side routes (/2d, /studio, …) have no matching file,
-        # so a 404 falls back to index.html and React Router takes over.
+        # so a 404 falls back to index.html and React Router takes over. BUT an
+        # unmatched /api/* path (or a stray HTTP GET to a /ws/* path) must stay a
+        # real 404, never the SPA shell — this mount is LAST, so any route typo or
+        # unwired router would otherwise silently 200 with index.html (it once
+        # masked the instability router never being include_router'd). A genuine
+        # WebSocket upgrade to an unmatched /ws/* path reaches this mount too
+        # (every real /ws/* route is registered earlier and matches first, so
+        # only unmatched ones fall through here) — StaticFiles.__call__ asserts
+        # scope["type"] == "http" and raises an uncaught AssertionError for
+        # websocket scope, which uvicorn turns into a bare 500. __call__ below
+        # intercepts websocket scope and denies the handshake cleanly before it
+        # ever reaches StaticFiles. Client routes have no such prefix, so
+        # they're unaffected.
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] == "websocket":
+                from starlette.responses import JSONResponse  # noqa: PLC0415
+                from starlette.websockets import WebSocket, WebSocketClose  # noqa: PLC0415
+
+                if "websocket.http.response" in scope.get("extensions", {}):
+                    websocket = WebSocket(scope, receive=receive, send=send)
+                    await websocket.send_denial_response(
+                        JSONResponse({"detail": "Not Found"}, status_code=404)
+                    )
+                else:
+                    await WebSocketClose()(scope, receive, send)
+                return
+            await super().__call__(scope, receive, send)
+
         async def get_response(self, path: str, scope):  # type: ignore[no-untyped-def]
             try:
                 return await super().get_response(path, scope)
             except _StarletteHTTPException as exc:
                 if exc.status_code == 404:
+                    req_path = scope.get("path", "")
+                    if req_path.startswith("/api/") or req_path.startswith("/ws/"):
+                        raise
                     return await super().get_response("index.html", scope)
                 raise
 

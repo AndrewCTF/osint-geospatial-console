@@ -288,10 +288,11 @@ export const defaultLayers: readonly LayerDescriptor[] = [
   // Keyless vessel coverage for the Strait of Hormuz, where Digitraffic (Baltic
   // only) and AISStream (needs a key) show nothing. Sentinel-1 SAR detects
   // ship-sized backscatter targets regardless of AIS; targets with no nearby
-  // AIS report render as red dark-vessel diamonds (darkCandidate). Uses the
-  // operator's CDSE credentials. Detection is heavy (SAR fetch + CFAR) and
-  // Sentinel-1 revisits are ~12h, so this polls slowly. Off by default; flip on
-  // from the LayerRail when watching Hormuz.
+  // AIS report render as red dark-vessel diamonds (darkCandidate) — a real SAR
+  // contact with no matching AIS transmission. Uses the operator's CDSE
+  // credentials. Detection is heavy (SAR fetch + CFAR) and Sentinel-1 revisits
+  // are ~12h, so this polls slowly. Off by default; flip on from the LayerRail
+  // when watching Hormuz.
   {
     id: 'maritime.sar.hormuz',
     group: 'maritime',
@@ -853,6 +854,37 @@ export const defaultLayers: readonly LayerDescriptor[] = [
     time: { temporal: true },
     crs: 'EPSG:4326',
     license: 'ReliefWeb / OCHA (open)',
+    opacity: 1,
+    visibleByDefault: false,
+    emits: ['event'],
+  },
+  // ── 2026-07-21 context+markets wave ─────────────────────────────────────
+  {
+    id: 'airspace.nasstatus',
+    group: 'hazards',
+    title: 'NAS ground stops · FAA',
+    kind: 'geojson',
+    auth: 'none',
+    endpoint: '/api/airspace/nas-status',
+    refresh: { mode: 'pull', ttlSec: 300 },
+    time: { temporal: true },
+    crs: 'EPSG:4326',
+    license: 'FAA (public domain)',
+    opacity: 1,
+    visibleByDefault: false,
+    emits: ['event'],
+  },
+  {
+    id: 'climate.anomalies',
+    group: 'hazards',
+    title: 'Climate anomalies · Open-Meteo ERA5',
+    kind: 'geojson',
+    auth: 'none',
+    endpoint: '/api/climate/anomalies',
+    refresh: { mode: 'pull', ttlSec: 43200 },
+    time: { temporal: true },
+    crs: 'EPSG:4326',
+    license: 'Open-Meteo ERA5 (open)',
     opacity: 1,
     visibleByDefault: false,
     emits: ['event'],

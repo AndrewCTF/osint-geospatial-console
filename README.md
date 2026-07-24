@@ -23,11 +23,11 @@ It also runs as an MCP server, so an AI agent can query the same live feeds
 instead of guessing from its training cut-off — everything it returns is
 labelled as automated output, not sold as "AI insight."
 
-**[Live demo](https://projectvelocity.org)** · [Quick start](#quick-start) · [The apps](#the-apps) · [Take the tour](#take-the-tour) · [Query it from an AI agent](#mcp-server-query-the-live-console-from-an-ai-agent)
+[Quick start](#quick-start) · [The apps](#the-apps) · [Take the tour](#take-the-tour) · [Query it from an AI agent](#mcp-server-query-the-live-console-from-an-ai-agent)
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-orange.svg)](./LICENSE)
 [![Version](https://img.shields.io/badge/release-v1.0.1-blue.svg)](https://github.com/AndrewCTF/velocity/releases/latest)
-[![Tests](https://img.shields.io/badge/tests-1719%20passing-brightgreen.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-1972%20passing-brightgreen.svg)](#tests)
 [![No keys required](https://img.shields.io/badge/API%20keys-optional-success.svg)](#what-it-pulls-in)
 
 <p align="center">
@@ -151,7 +151,7 @@ you had selected. The top bar groups them:
 | **3D** | City 3D | Gaussian-splat city scenes built from a keyless satellite AOI. |
 
 The rest of this README tours the ones you'll live in. Everything below is a
-real screenshot of the current build (v0.9.2), not a mockup.
+real screenshot of the current build (v1.0.1), not a mockup.
 
 ## Take the tour
 
@@ -283,18 +283,36 @@ A few things worth knowing up front, because I'd rather you read them here than
 be annoyed later:
 
 - It's built for one analyst. One optional API key, no accounts or roles.
-- **What persists vs what clears.** Durable on disk: the position-history
-  archive (SQLite at `./data/history.db`), the local ontology store — ontology
-  objects, case files, situations (`intel/ontology_local.py`) — and the evidence
-  locker (blobs under `./data/evidence`, custody chain in the ontology store's
-  append-only `assertions` table). Volatile, and cleared on backend restart: the
-  live incident list, transient AOI selections, and generated watch-officer
-  briefs. The Docker Compose volumes mean the durable stores survive
-  `docker compose down`, not just a process restart. The dev compose sets
-  `HISTORY_RETENTION_HOURS=48` (2 days) out of the box; set `ARCHIVE_MODE=1` (the
-  production compose profile does, with a 5 GB starting budget via
-  `HISTORY_DISK_BUDGET_GB`) to size the archive against your disk instead of a
-  fixed time window.
+- **What persists vs what clears.** Durable on disk under `./data/`: the
+  position-history archive (SQLite at `./data/history.db`), the local ontology
+  store — ontology objects, case files, situations (`intel/ontology_local.py`,
+  `./data/ontology.db`) — plus separate SQLite files for Foundry, Workflows,
+  alert rules, cached news and the Instability Index scorer (`foundry.db`,
+  `workflows.db`, `alert_rules.db`, `news_history.db`, `instability.db`), and a
+  keyless-local audit log (`audit_log.db` — only materializes when no
+  `SUPABASE_URL` is configured; a keyed deployment writes audit rows to
+  Supabase instead and never creates the file). That's 8 SQLite files, not
+  one — back up the whole `./data` volume, not a single DB. Also durable: the
+  evidence locker (blobs under `./data/evidence`, custody chain in the
+  ontology store's append-only `assertions` table), a disk tile cache
+  (`./data/tilecache`) and any downloaded local models (`./data/models`).
+  Volatile, and cleared on backend restart: the live incident list, transient
+  AOI selections, and generated watch-officer briefs. The Docker Compose
+  volumes mean the durable stores survive `docker compose down`, not just a
+  process restart.
+- **Retention, honestly.** The dev compose sets `HISTORY_RETENTION_HOURS=48`
+  (2 days), but that's a ceiling, not a promise: `HISTORY_MAX_BYTES` (2 GB by
+  default) binds first, and at measured global ADS-B+AIS ingest (~3 GB/h on a
+  keyless box pulling full-breadth feeds) the byte cap fills well before the
+  hour window matters, leaving well under 2 hours of effective depth out of
+  the box — not 48. The hour window only becomes the binding limit once disk
+  is large enough for it to be the tighter cap; a genuine 48h global archive
+  needs on the order of 150 GB (`~3 GB/h * 48h`). Raise `HISTORY_MAX_BYTES`,
+  or set `ARCHIVE_MODE=1` with `HISTORY_DISK_BUDGET_GB` sized to what you're
+  willing to spend on disk (the production compose profile does this, 5 GB to
+  start). The replay scrubber's day-picker and ownership chip show the
+  ACTUAL current depth (`oldest_ts` off `/api/history/coverage`), not the
+  configured ceiling, so you can see what you're really getting.
 - AIS runs keyless and global (~33k vessels, MMSI-deduped across ShipXplorer,
   MyShipTracking, Digitraffic and Kystverket), but coverage is densest over
   Northern Europe and the Baltic and thins out elsewhere; an AISStream key fills
@@ -356,7 +374,7 @@ Protocol** server, so an AI agent can interrogate the same warm feeds the globe
 renders without scraping a dozen sites or flooding its own context. Ask "where
 is GPS being jammed right now?" and it answers from the live feed. Full
 architecture + `/api/intel/*` HTTP reference: [`docs/mcp-server.md`](./docs/mcp-server.md).
-It exposes 34 tools over `app.mcp_server` (a representative slice below; run
+It exposes 46 tools over `app.mcp_server` (a representative slice below; run
 `--list-tools` for the full set):
 
 | Tool | What it returns |
@@ -405,21 +423,21 @@ installer prints the exact commands for your OS: `bash
 plugin/osint-geoint/install.sh` (Linux/macOS, `-y` to register the MCP server) or
 `plugin\osint-geoint\install.ps1` (Windows, `-Run` to register).
 
-### Hosted: point your agent at the live endpoint
+### Point your agent at your own instance
 
-On the hosted platform the MCP server is mounted into the backend at `/mcp`
-(streamable-HTTP), so there's nothing to install or run. Register it with any
-MCP client using your Velocity access token:
+The MCP server is mounted into the backend at `/mcp` (streamable-HTTP), so
+once you're running Velocity yourself there's nothing extra to install to
+query it from an agent. Register it with any MCP client against your own
+host:
 
 ```bash
 claude mcp add --transport http osint-geoint \
-  https://projectvelocity.org/mcp \
+  http://localhost:8000/mcp \
   --header "Authorization: Bearer $VELOCITY_TOKEN"
 ```
 
-`$VELOCITY_TOKEN` is your signed-in Velocity (Supabase) access token; the
-gateway Worker verifies it and the backend re-checks it, so the endpoint is
-gated to your session.
+`$VELOCITY_TOKEN` is only required if you've set `API_KEY` on the backend; a
+keyless local instance needs no header at all.
 
 ### Self-host / develop
 
@@ -502,8 +520,14 @@ These tiers come from watching it actually run. 3D-sat genuinely wants a lot of
 VRAM, and the low-VRAM minimum only holds for the 2D-dark map; switch on 3D-sat
 and you'll want a discrete card with headroom.
 
-**Backend (server):** Python 3.12, ~1 GB RAM, outbound HTTPS. Runs on a small
-VPS or the same box, and it isn't the bottleneck.
+**Backend (server):** Python 3.12, outbound HTTPS, measured steady-state
+~3.2 GB backend RSS with the full feed set warm. Runs on a small VPS or the
+same box, and it isn't the frontend's bottleneck. The optional headless-Chrome
+coverage sidecars are the real memory line item: the ADS-B scraping tier
+measured ~11 GB RSS across its ~50-process Chrome tree and the AIS tier
+~3-6 GB across its ~20-36 (both measured 2026-07-24 at full coverage), so
+budget roughly 15 GB on top of the backend when both are enabled — or skip
+them and keep the lighter direct feeds.
 
 ## Stack
 
@@ -546,7 +570,7 @@ osint/
 
 ```bash
 # from the repo ROOT (running from apps/api makes .env auth resolve → a wall of 401s)
-OSINT_DISABLE_BACKGROUND=1 apps/api/.venv/bin/pytest apps/api -q   # 1687 passed + 1 skipped
+OSINT_DISABLE_BACKGROUND=1 apps/api/.venv/bin/pytest apps/api -q   # 1972 passed + 2 skipped
 pnpm -r test                          # vitest (web, shared)
 pnpm -r typecheck
 bash scripts/verify.sh                # typecheck + lint + web unit + api tests in one shot

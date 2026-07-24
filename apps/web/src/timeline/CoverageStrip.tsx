@@ -28,6 +28,11 @@ export interface CoverageBucket {
 
 export interface Coverage {
   recording_since: number | null; // epoch seconds, MIN(t) over positions
+  // Same value as recording_since (global MIN(t)) under an unambiguous name:
+  // "recording_since" reads like a fixed deployment date, but it marches
+  // forward whenever the byte cap or hour-window prune drops the oldest
+  // rows. Optional so an older cached backend response still type-checks.
+  oldest_ts?: number | null;
   total_bytes: number;
   row_count: number;
   buckets: CoverageBucket[];

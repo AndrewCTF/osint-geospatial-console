@@ -27,6 +27,11 @@ services:
       # Make the README's 48h-retention claim true for a bare `docker compose
       # up` with no .env copied — the code default is 168h (7 days); 48h only
       # applies automatically if .env.example got copied to .env.
+      # NOTE: this is a ceiling, not a promise. HISTORY_MAX_BYTES (2 GB
+      # default) binds FIRST — at measured global ADS-B+AIS ingest (~3 GB/h)
+      # the byte cap fills in well under 2h, so the 48h window rarely gets a
+      # chance to matter. Raise HISTORY_MAX_BYTES (or set ARCHIVE_MODE=1 +
+      # HISTORY_DISK_BUDGET_GB below) to actually hold 48h of global data.
       HISTORY_RETENTION_HOURS: 48
       # ── Owned replay (the flagship) ──────────────────────────────────────
       # This DEV stack keeps a rolling 48h window by default (it runs

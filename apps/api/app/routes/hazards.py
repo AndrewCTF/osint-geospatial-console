@@ -38,44 +38,52 @@ _GDACS_TYPE = {
 }
 
 
+async def _load_gdacs() -> dict[str, Any]:
+    raw = await fg.fetch_json(GDACS_URL)
+    out: list[fg.Feature] = []
+    for f in (raw or {}).get("features", []) or []:
+        geom = f.get("geometry") or {}
+        coords = geom.get("coordinates")
+        if geom.get("type") != "Point" or not isinstance(coords, list) or len(coords) < 2:
+            continue
+        p = f.get("properties") or {}
+        eid = str(p.get("eventid") or p.get("eventname") or "")
+        etype = str(p.get("eventtype") or "").upper()
+        if not eid:
+            continue
+        out.append(
+            fg.point(
+                f"disaster:{etype}{eid}",
+                fg.num(coords[0]) or 0.0,
+                fg.num(coords[1]) or 0.0,
+                {
+                    "kind": "disaster",
+                    "event_type": _GDACS_TYPE.get(etype, etype or "event"),
+                    "alert": str(p.get("alertlevel") or "").lower(),
+                    "name": p.get("name") or p.get("description"),
+                    "country": p.get("country"),
+                    "from": p.get("fromdate"),
+                    "to": p.get("todate"),
+                    "severity": (p.get("severitydata") or {}).get("severity"),
+                    "url": p.get("url", {}).get("report")
+                    if isinstance(p.get("url"), dict)
+                    else None,
+                },
+            )
+        )
+    return fg.fc(out)
+
+
+async def load_gdacs() -> dict[str, Any]:
+    """Cached GDACS fetch — the callable surface for in-process consumers
+    (the instability scorer). Never call the route handler in-process; call
+    this."""
+    return await fg.cached("hazards:gdacs", 600.0, _load_gdacs)
+
+
 @router.get("/api/hazards/gdacs")
 async def gdacs() -> dict[str, Any]:
-    async def load() -> dict[str, Any]:
-        raw = await fg.fetch_json(GDACS_URL)
-        out: list[fg.Feature] = []
-        for f in (raw or {}).get("features", []) or []:
-            geom = f.get("geometry") or {}
-            coords = geom.get("coordinates")
-            if geom.get("type") != "Point" or not isinstance(coords, list) or len(coords) < 2:
-                continue
-            p = f.get("properties") or {}
-            eid = str(p.get("eventid") or p.get("eventname") or "")
-            etype = str(p.get("eventtype") or "").upper()
-            if not eid:
-                continue
-            out.append(
-                fg.point(
-                    f"disaster:{etype}{eid}",
-                    fg.num(coords[0]) or 0.0,
-                    fg.num(coords[1]) or 0.0,
-                    {
-                        "kind": "disaster",
-                        "event_type": _GDACS_TYPE.get(etype, etype or "event"),
-                        "alert": str(p.get("alertlevel") or "").lower(),
-                        "name": p.get("name") or p.get("description"),
-                        "country": p.get("country"),
-                        "from": p.get("fromdate"),
-                        "to": p.get("todate"),
-                        "severity": (p.get("severitydata") or {}).get("severity"),
-                        "url": p.get("url", {}).get("report")
-                        if isinstance(p.get("url"), dict)
-                        else None,
-                    },
-                )
-            )
-        return fg.fc(out)
-
-    return await fg.cached("hazards:gdacs", 600.0, load)
+    return await load_gdacs()
 
 
 # ── NIFC / WFIGS current wildfire perimeters (polygons) ──────────────────────

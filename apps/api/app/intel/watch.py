@@ -146,14 +146,74 @@ def within_geofence(rule: dict[str, Any], lon: float, lat: float) -> bool:
 
     ``haversine_km`` is **lon-first** (geo.py) — passing lat-first would mirror the
     AOI across the diagonal, so the order here is load-bearing.
+
+    An identity-only rule (P6.1: icao24/mmsi/callsign, no AOI) persists
+    ``None`` for lat/lon/radius_nm. Both callers already gate this function
+    behind ``has_identity`` so it's never reached for those rows — but a
+    legacy or foreign-written row (e.g. a hand-edited Supabase table) isn't
+    guaranteed that invariant, so read a missing AOI as "never inside" rather
+    than crashing the sweep on ``float(None)``.
     """
-    return haversine_km(rule["lon"], rule["lat"], lon, lat) <= _radius_km(
-        rule.get("radius_nm", 50)
-    )
+    r_lat, r_lon, radius_nm = rule.get("lat"), rule.get("lon"), rule.get("radius_nm")
+    if r_lat is None or r_lon is None or radius_nm is None:
+        return False
+    return haversine_km(r_lon, r_lat, lon, lat) <= _radius_km(radius_nm)
 
 
 def _meets_severity(rule: dict[str, Any], severity_rank: int) -> bool:
     return severity_rank >= int(rule.get("min_severity", 1) or 1)
+
+
+# ── per-identity watch (icao24/mmsi/callsign pin, on top of category+AOI) ──────
+# A rule with any identity field set follows THAT entity specifically, rather
+# than any contact of a category that happens to cross the AOI. AlertRuleIn
+# already lowercases these at intake (routes/alert_rules.py), so matching here
+# is a plain case-insensitive containment check with no re-normalizing.
+
+_IDENTITY_FIELDS = ("icao24", "mmsi", "callsign")
+
+
+def _rule_identity(rule: dict[str, Any]) -> dict[str, str]:
+    """The non-empty identity fields a rule was created with, already
+    lowercased. Empty dict means "no identity pin" — the rule stays
+    category+AOI-only, unchanged from before this field existed."""
+    out: dict[str, str] = {}
+    for f in _IDENTITY_FIELDS:
+        v = rule.get(f)
+        if v:
+            out[f] = str(v).strip().lower()
+    return out
+
+
+def _candidate_identity_tokens(cand: _Candidate) -> set[str]:
+    """Every string a candidate could be identified by: its canonical entity
+    id, and any icao24/mmsi carried in ``ref`` (populated by
+    ``candidates_from_snapshot`` / ``candidates_from_vessels`` / the history
+    detectors — see their ``ref={...}`` literals)."""
+    tokens = {cand.entity_id.lower()}
+    icao = cand.ref.get("icao24")
+    if icao:
+        tokens.add(str(icao).lower())
+    mmsi = cand.ref.get("mmsi")
+    if mmsi:
+        tokens.add(str(mmsi).lower())
+    return tokens
+
+
+def _matches_identity(rule: dict[str, Any], cand: _Candidate) -> bool:
+    """True when the rule has no identity pin (nothing to gate on) OR every
+    identity field the rule DOES carry matches this candidate — by canonical
+    id/ref token, or (for callsign, which candidates don't carry structured)
+    as a substring of the human summary."""
+    fields = _rule_identity(rule)
+    if not fields:
+        return True
+    tokens = _candidate_identity_tokens(cand)
+    summary = cand.summary.lower()
+    for val in fields.values():
+        if val not in tokens and val not in summary:
+            return False
+    return True
 
 
 @dataclass
@@ -419,12 +479,18 @@ def evaluate_rules(
     for r in active:
         rid = r.get("id")
         want = set(r.get("kinds") or [])  # empty → match any kind
+        has_identity = bool(_rule_identity(r))
         for cand in candidates:
             if want and cand.kind not in want:
                 continue
+            if not _matches_identity(r, cand):
+                continue
             key = (str(rid), cand.entity_id)
             was_inside = _STATE.inside.get(key, False)
-            now_inside = within_geofence(r, cand.lon, cand.lat)
+            # An identity-pinned rule follows the entity regardless of the
+            # drawn AOI — the geofence is the whole gate for a category rule,
+            # but for an identity rule the identity match ITSELF is the gate.
+            now_inside = has_identity or within_geofence(r, cand.lon, cand.lat)
             if now_inside and not was_inside:
                 _STATE.inside[key] = True
                 if _meets_severity(r, cand.severity_rank):
@@ -475,12 +541,15 @@ def standing_detections(
         if not r.get("enabled", True):
             continue
         want = set(r.get("kinds") or [])  # empty → match any kind
+        has_identity = bool(_rule_identity(r))
         for cand in candidates:
             if want and cand.kind not in want:
                 continue
+            if not _matches_identity(r, cand):
+                continue
             if not _meets_severity(r, cand.severity_rank):
                 continue
-            if not within_geofence(r, cand.lon, cand.lat):
+            if not has_identity and not within_geofence(r, cand.lon, cand.lat):
                 continue
             out.append({
                 "rule_id": r.get("id"),

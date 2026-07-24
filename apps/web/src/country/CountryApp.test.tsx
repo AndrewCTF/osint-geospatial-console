@@ -7,6 +7,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { BriefCard } from './BriefCard.js';
 import { CountryApp } from './CountryApp.js';
+import { InstabilityCard } from './InstabilityCard.js';
 import { LeadershipCard } from './LeadershipCard.js';
 import { SecurityCard } from './SecurityCard.js';
 import type { ProfileResponse, SecurityResponse } from './shared.js';
@@ -146,7 +147,7 @@ describe('BriefCard', () => {
       jsonResponse({ ok: false, reason: 'no LLM backend configured' }),
     );
     render(<BriefCard iso3="ZZF" />);
-    // Nothing fetched on mount — the brief is click-only (10-60 s LLM call).
+    // Nothing fetched on mount — the brief is click-only (10-90 s LLM call).
     expect(mockedFetch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Generate brief' }));
     await waitFor(() => {
@@ -154,6 +155,13 @@ describe('BriefCard', () => {
     });
     expect(mockedFetch).toHaveBeenCalledWith('/api/country/ZZF/brief', expect.anything());
     expect(screen.getByText(/Settings → Local AI/)).toBeTruthy();
+  });
+
+  it('promises the real 90s server budget while generating (priya-2: was a stale 60s ceiling)', async () => {
+    mockedFetch.mockImplementation(() => new Promise(() => {}));
+    render(<BriefCard iso3="ZZM" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate brief' }));
+    expect(await screen.findByText(/up to ~90 s/)).toBeTruthy();
   });
 
   it('renders the markdown brief on ok:true', async () => {
@@ -167,6 +175,23 @@ describe('BriefCard', () => {
     });
     expect(screen.getByText('Stable.')).toBeTruthy();
     expect(screen.getByText(/llama\.cpp/)).toBeTruthy();
+  });
+});
+
+describe('InstabilityCard', () => {
+  beforeEach(() => {
+    mockedFetch.mockReset();
+  });
+
+  it('renders nothing when the backend has no snapshot for the country (404)', async () => {
+    mockedFetch.mockResolvedValue(jsonResponse({ error: 'no snapshot' }, false));
+    const { container } = render(<InstabilityCard iso3="ZZZ" />);
+    await waitFor(() => {
+      expect(mockedFetch).toHaveBeenCalledWith('/api/country/instability/ZZZ', expect.anything());
+    });
+    await waitFor(() => {
+      expect(container.textContent).toBe('');
+    });
   });
 });
 
@@ -212,6 +237,24 @@ describe('CountryApp', () => {
           ],
         });
       if (u.includes('/un')) return jsonResponse({ iso3: 'TST', name: 'Testland', m49: '999', source: 'unsd', series: [] });
+      if (u === '/api/advisories') return jsonResponse({ items: [], sources: [], unavailable: false });
+      if (u === '/api/displacement') return jsonResponse({ items: [], source: 'hapi.humdata.org', unavailable: true });
+      if (u.includes('/api/country/instability/'))
+        return jsonResponse({
+          iso3: 'TST',
+          score: 42.3,
+          components: [
+            { key: 'conflict_events', raw: 5, normalized: 60, weight: 0.4, inputs: { window_days: 30 } },
+            { key: 'displacement', raw: 1000, normalized: 20, weight: 0.3, inputs: null },
+          ],
+          components_present: ['conflict_events', 'displacement'],
+          ts_utc: '2026-07-20T12:00:00Z',
+          history: [
+            { ts_utc: '2026-07-18T12:00:00Z', score: 38.1 },
+            { ts_utc: '2026-07-19T12:00:00Z', score: 40.0 },
+            { ts_utc: '2026-07-20T12:00:00Z', score: 42.3 },
+          ],
+        });
       return jsonResponse({});
     });
 
@@ -228,6 +271,11 @@ describe('CountryApp', () => {
     expect(screen.getByText('Testland Army')).toBeTruthy();
     // Military WB indicator lives in the posture card; the % of GDP unit shows.
     expect(screen.getByText('% of GDP')).toBeTruthy();
+    // Instability score renders from the composite endpoint.
+    await waitFor(() => {
+      expect(screen.getByText('42.3')).toBeTruthy();
+    });
+    expect(screen.getByText(/Components: conflict_events, displacement/)).toBeTruthy();
     // Brief endpoint must NOT have been called without a click.
     const briefCalls = mockedFetch.mock.calls.filter(([u]) => String(u).includes('/brief'));
     expect(briefCalls).toHaveLength(0);

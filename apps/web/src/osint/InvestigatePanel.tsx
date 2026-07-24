@@ -41,14 +41,15 @@ export function InvestigatePanel(): JSX.Element {
       });
       if (!r.ok) {
         const detail = await r.text();
-        // 401 = not signed in (persistence needs a real user); 400 = bad target;
-        // 503 = recon sidecar not configured.
+        // 400 = bad target; 503 = recon sidecar not configured (or, on a
+        // configured-but-unauthenticated deployment, the compute-path gate).
+        // Investigate/recon degrade to a local identity when keyless, so a
+        // 401 here means a real Supabase deployment needs sign-in — no
+        // special-cased copy, just the server's own detail.
         setError(
-          r.status === 401
-            ? 'Sign in to persist an investigation'
-            : r.status === 503
-              ? 'Deep recon needs the OSINT_RECON_SIDECAR_URL sidecar running'
-              : `${r.status}: ${detail.slice(0, 200)}`,
+          r.status === 503 && detail.toLowerCase().includes('recon')
+            ? 'Deep recon needs the OSINT_RECON_SIDECAR_URL sidecar running'
+            : `${r.status}: ${detail.slice(0, 200)}`,
         );
         return;
       }
@@ -135,6 +136,34 @@ export function InvestigatePanel(): JSX.Element {
                 threat pulses: {String(result.summary['threat_pulses'])}
               </div>
             )}
+          {typeof result.summary?.['cik'] === 'string' && result.summary['cik'] && (
+            <div>SEC CIK: {String(result.summary['cik'])}</div>
+          )}
+          {/* Company screening counts: a 0 is "checked, clean" — the whole point
+              of a due-diligence record — so render it as a real zero, not hide it. */}
+          {typeof result.summary?.['sanctions_matches'] === 'number' && (
+            <div
+              style={
+                (result.summary['sanctions_matches'] as number) > 0
+                  ? { color: 'var(--alert)' }
+                  : undefined
+              }
+            >
+              Sanctions matches: {String(result.summary['sanctions_matches'])}
+            </div>
+          )}
+          {typeof result.summary?.['opencorporates_matches'] === 'number' && (
+            <div>OpenCorporates matches: {String(result.summary['opencorporates_matches'])}</div>
+          )}
+          {typeof result.summary?.['aleph_matches'] === 'number' && (
+            <div>Aleph matches: {String(result.summary['aleph_matches'])}</div>
+          )}
+          {typeof result.summary?.['wikidata_matches'] === 'number' && (
+            <div>Wikidata matches: {String(result.summary['wikidata_matches'])}</div>
+          )}
+          {typeof result.summary?.['officers'] === 'number' && (
+            <div>Officers found: {String(result.summary['officers'])}</div>
+          )}
         </div>
       )}
     </div>

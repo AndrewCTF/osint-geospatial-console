@@ -15,7 +15,7 @@ import json
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -311,12 +311,25 @@ async def upload_dataset(
 @router.post("/api/foundry/datasets/{dataset_id}/upload")
 async def upload_dataset_version(
     dataset_id: str,
+    request: Request,
     file: UploadFile = File(...),
     mode: str = Form("snapshot"),
     types: str = Form(""),
     cascade: bool = Form(False),
     ctx: UserCtx = Depends(current_user_or_local),
 ) -> dict[str, Any]:
+    if "mode" in request.query_params:
+        # mode is Form-only — a query-string ?mode= is silently ignored by
+        # FastAPI's binding and this upload would fall through to the
+        # "snapshot" default, replacing (not appending to) the dataset.
+        # Reject loudly instead of doing that quietly.
+        raise HTTPException(
+            status_code=422,
+            detail="mode must be sent as a multipart form field, not a query "
+                   "parameter (a query-string mode is silently ignored and "
+                   "this upload would fall back to the destructive default "
+                   "'snapshot'); resend it as a form field, e.g. -F mode=append",
+        )
     rows, schema = await _read_upload(file, _parse_type_pins(types))
     store = _store()
     if mode not in ("snapshot", "append"):
@@ -336,6 +349,9 @@ async def upload_dataset_version(
         # File-arrival sensor: a new version makes downstream transforms stale;
         # rebuild them now instead of waiting for the next scheduler tick.
         ds["cascade_build"] = await builds_mod.run_pipeline_build(store, only_stale=True)
+    # Echo the mode actually applied so a caller can verify it wasn't
+    # silently dropped or defaulted.
+    ds["mode"] = mode
     return ds
 
 
